@@ -1,2 +1,34 @@
 wakaba~kaba is wakaba imageboard script tuned in some places to
 improve performance and add a bit of bells and whistles.
+
+To run this version you need a web server, database engine and
+perl (probably with cpan because you'll need to install some
+modules). I'm develop on nginx and postgres if you care.
+
+Wakaba-kaba now runs on following configs:
+
+---[nginx site]-------------------------------------------------
+
+# TODO: Here we need to add a bit more environment variables.
+location ~ wakaba\.pl$ {
+     fastcgi_pass   localhost:8888;
+     fastcgi_index  wakaba.pl;
+     include  fastcgi_params;
+     fastcgi_param SCRIPT_NAME $fastcgi_script_name;
+}
+
+location ~ captcha\.pl$ {
+     fastcgi_pass   localhost:8887;
+     fastcgi_index  index.pl;
+     include  fastcgi_params;
+}
+
+-----------------------------------------------------------------
+
+
+---[type in shell to run fastcgi servers]-----------------------
+
+FCGI_SOCKET_PATH=":8887" ./captcha.pl &
+FCGI_SOCKET_PATH=":8888" ./wakaba.pl &
+
+----------------------------------------------------------------
