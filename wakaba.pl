@@ -1551,8 +1551,7 @@ sub make_error($)
 
 	if($dbh)
 	{
-		$dbh->{Warn}=0;
-		$dbh->disconnect();
+		# TODO Free connection back to pool here
 	}
 
 	if(ERRORLOG) # could print even more data, really.
