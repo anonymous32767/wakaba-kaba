@@ -197,14 +197,25 @@ sub init_captcha_database($)
 	my ($sth);
 
 	$sth=$dbh->do("DROP TABLE ".SQL_CAPTCHA_TABLE.";") if(table_exists_captcha($dbh,SQL_CAPTCHA_TABLE));
-	$sth=$dbh->prepare("CREATE TABLE ".SQL_CAPTCHA_TABLE." (".
-	"ip TEXT,".
-	"pagekey TEXT,".
-	"word TEXT,".
-	"timestamp INTEGER".
-#	",PRIMARY KEY(ip,key)".
-	");") or die S_SQLFAIL;
-	$sth->execute() or die S_SQLFAIL;
+
+	eval {
+		$dbh->begin_work();
+
+		$sth=$dbh->prepare("CREATE TABLE ".SQL_CAPTCHA_TABLE." (".
+			"ip TEXT,".
+			"pagekey TEXT,".
+			"word TEXT,".
+			"timestamp INTEGER".
+			#",PRIMARY KEY(ip,key)".
+		");");
+		$sth->execute();
+
+		$dbh->commit();
+	};
+	if ($@) {
+		$dbh->rollback();
+		die S_SQLFAIL;
+	}
 }
 
 sub trim_captcha_database($)

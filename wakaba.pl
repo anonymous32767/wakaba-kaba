@@ -41,6 +41,8 @@ if(CONVERT_CHARSETS)
 # Global init
 #
 
+my $boardName = "test"; # TEMPORARY
+
 my $protocol_re=qr/(?:http|https|ftp|mailto|nntp)/;
 
 my $dbh=DBI->connect(SQL_DBI_SOURCE,SQL_USERNAME,SQL_PASSWORD,
@@ -56,7 +58,7 @@ init_proxy_database() if(!table_exists(SQL_PROXY_TABLE));
 if(!table_exists(SQL_TABLE)) # check for comments table
 {
 		  init_database();
-		  build_cache();
+		  build_cache($boardName);
 		  make_http_forward(HTML_SELF,ALTERNATE_REDIRECT);
 }
 
@@ -67,7 +69,7 @@ while (my $query=new CGI::Fast) {
 
   	if(!$task)
 	{
-		build_cache() unless -e HTML_SELF;
+		build_cache($boardName) unless -e HTML_SELF;
 		make_http_forward(HTML_SELF,ALTERNATE_REDIRECT);
 	}
 	elsif($task eq "post")
@@ -86,7 +88,7 @@ while (my $query=new CGI::Fast) {
 		my $no_format=$query->param("no_format");
 		my $postfix=$query->param("postfix");
 
-		post_stuff($parent,$name,$email,$subject,$comment,$file,$file,$password,$nofile,$captcha,$admin,$no_captcha,$no_format,$postfix);
+		post_stuff($boardName,$parent,$name,$email,$subject,$comment,$file,$file,$password,$nofile,$captcha,$admin,$no_captcha,$no_format,$postfix);
 	}
 	elsif($task eq "delete")
 	{
@@ -96,7 +98,7 @@ while (my $query=new CGI::Fast) {
 		my $admin=$query->param("admin");
 		my @posts=$query->param("delete");
 
-		delete_stuff($password,$fileonly,$archive,$admin,@posts);
+		delete_stuff($boardName,$password,$fileonly,$archive,$admin,@posts);
 	}
 	elsif($task eq "admin")
 	{
@@ -121,7 +123,7 @@ while (my $query=new CGI::Fast) {
 		my $admin=$query->param("admin");
 		my $ip=$query->param("ip");
 		my $mask=$query->param("mask");
-		delete_all($admin,parse_range($ip,$mask));
+		delete_all($boardName,$admin,parse_range($ip,$mask));
 	}
 	elsif($task eq "bans")
 	{
@@ -203,7 +205,7 @@ while (my $query=new CGI::Fast) {
 	elsif($task eq "rebuild")
 	{
 		my $admin=$query->param("admin");
-		do_rebuild_cache($admin);
+		do_rebuild_cache($boardName,$admin);
 	}
 	elsif($task eq "nuke")
 	{
@@ -221,14 +223,18 @@ $dbh->disconnect();
 # Cache page creation
 #
 
-sub build_cache()
+sub build_cache($)
 {
+	my ($section) = @_;
 	my ($sth,$row,@thread);
 	my $page=0;
 
 	# grab all posts, in thread order (ugh, ugly kludge)
-	$sth=$dbh->prepare("SELECT * FROM ".SQL_TABLE." ORDER BY lasthit DESC,CASE parent WHEN 0 THEN num ELSE parent END ASC,num ASC") or make_error(S_SQLFAIL);
-	$sth->execute() or make_error(S_SQLFAIL);
+	$sth=$dbh->prepare(
+		"SELECT * FROM ".SQL_TABLE." WHERE section=? ".
+		"ORDER BY lasthit DESC,CASE parent WHEN 0 THEN num ELSE parent END ASC,num ASC"
+	) or make_error(S_SQLFAIL);
+	$sth->execute($section) or make_error(S_SQLFAIL);
 
 	$row=get_decoded_hashref($sth);
 
@@ -341,14 +347,14 @@ sub build_cache_page($$@)
 	));
 }
 
-sub build_thread_cache($)
+sub build_thread_cache($$)
 {
-	my ($thread)=@_;
+	my ($section,$thread)=@_;
 	my ($sth,$row,@thread);
 	my ($filename,$tmpname);
 
-	$sth=$dbh->prepare("SELECT * FROM ".SQL_TABLE." WHERE num=? OR parent=? ORDER BY num ASC;") or make_error(S_SQLFAIL);
-	$sth->execute($thread,$thread) or make_error(S_SQLFAIL);
+	$sth=$dbh->prepare("SELECT * FROM ".SQL_TABLE." WHERE num=? AND section=? OR parent=? ORDER BY num ASC;") or make_error(S_SQLFAIL);
+	$sth->execute($thread,$section,$thread) or make_error(S_SQLFAIL);
 
 	while($row=get_decoded_hashref($sth)) { push(@thread,$row); }
 
@@ -392,8 +398,9 @@ sub print_page($$)
 	}
 }
 
-sub build_thread_cache_all()
+sub build_thread_cache_all($)
 {
+	my ($section) = @_;
 	my ($sth,$row,@thread);
 
 	$sth=$dbh->prepare("SELECT num FROM ".SQL_TABLE." WHERE parent=0;") or make_error(S_SQLFAIL);
@@ -401,7 +408,7 @@ sub build_thread_cache_all()
 
 	while($row=$sth->fetchrow_arrayref())
 	{
-		build_thread_cache($$row[0]);
+		build_thread_cache($section,$$row[0]);
 	}
 }
 
@@ -411,9 +418,9 @@ sub build_thread_cache_all()
 # Posting
 #
 
-sub post_stuff($$$$$$$$$$$$$$)
+sub post_stuff($$$$$$$$$$$$$$$)
 {
-	my ($parent,$name,$email,$subject,$comment,$file,$uploadname,$password,$nofile,$captcha,$admin,$no_captcha,$no_format,$postfix)=@_;
+	my ($section,$parent,$name,$email,$subject,$comment,$file,$uploadname,$password,$nofile,$captcha,$admin,$no_captcha,$no_format,$postfix)=@_;
 
 	# get a timestamp for future use
 	my $time=time();
@@ -555,48 +562,48 @@ sub post_stuff($$$$$$$$$$$$$$)
 	my ($filename,$md5,$width,$height,$thumbnail,$tn_width,$tn_height)=process_file($file,$uploadname,$time) if($file);
 
 	# finally, write to the database
-	my $sth=$dbh->prepare("INSERT INTO ".SQL_TABLE." VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);") or make_error(S_SQLFAIL);
-	$sth->execute($parent,$time,$lasthit,$numip,
-	$date,$name,$trip,$email,$subject,$password,$comment,
-	$filename,$size,$md5,$width,$height,$thumbnail,$tn_width,$tn_height) or make_error(S_SQLFAIL);
+	my $num = 0;
+	eval {
+		$dbh->begin_work();
+
+		my $sth=$dbh->prepare("UPDATE ".SQL_COUNTERS_TABLE." SET counter = counter + 1 WHERE section = ?;");
+		$sth->execute($section);
+
+		$sth=$dbh->prepare("SELECT counter FROM ".SQL_COUNTERS_TABLE." WHERE section = ?;");
+		$sth->execute($section);
+		$num=($sth->fetchrow_array())[0];
+
+		$sth=$dbh->prepare("INSERT INTO ".SQL_TABLE." VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
+		$sth->execute(
+			$parent,$time,$lasthit,$numip,$date,$name,$trip,$email,$subject,$password,$comment,
+			$filename,$size,$md5,$width,$height,$thumbnail,$tn_width,$tn_height,$section,$num
+		);
+
+		$dbh->commit();
+	};
+	if ($@) {
+		eval { $dbh->rollback(); };
+		make_error(S_SQLFAIL);
+	}
 
 	if($parent) # bumping
 	{
 		# check for sage, or too many replies
 		unless($email=~/sage/i or sage_count($parent_res)>MAX_RES)
 		{
-			$sth=$dbh->prepare("UPDATE ".SQL_TABLE." SET lasthit=$time WHERE num=? OR parent=?;") or make_error(S_SQLFAIL);
-			$sth->execute($parent,$parent) or make_error(S_SQLFAIL);
+			$sth=$dbh->prepare("UPDATE ".SQL_TABLE." SET lasthit=$time WHERE (num=? OR parent=?) AND section=?;") or make_error(S_SQLFAIL);
+			$sth->execute($parent,$parent,$section) or make_error(S_SQLFAIL);
 		}
 	}
 
 	# remove old threads from the database
-	trim_database();
+	trim_database($section);
 
 	# update the cached HTML pages
-	build_cache();
+	build_cache($section);
 
 	# update the individual thread cache
-	if($parent) { build_thread_cache($parent); }
-	else # must find out what our new thread number is
-	{
-		if($filename)
-		{
-			$sth=$dbh->prepare("SELECT num FROM ".SQL_TABLE." WHERE image=?;") or make_error(S_SQLFAIL);
-			$sth->execute($filename) or make_error(S_SQLFAIL);
-		}
-		else
-		{
-			$sth=$dbh->prepare("SELECT num FROM ".SQL_TABLE." WHERE timestamp=? AND comment=?;") or make_error(S_SQLFAIL);
-			$sth->execute($time,$comment) or make_error(S_SQLFAIL);
-		}
-		my $num=($sth->fetchrow_array())[0];
-
-		if($num)
-		{
-			build_thread_cache($num);
-		}
-	}
+	build_thread_cache($section,($parent or $num)) if ($parent or $num);
 
 	# set the name, email and password cookies
 	make_cookies(name=>$c_name,email=>$c_email,password=>$c_password,
@@ -1107,7 +1114,7 @@ sub process_file($$$)
 
 sub delete_stuff($$$$@)
 {
-	my ($password,$fileonly,$archive,$admin,@posts)=@_;
+	my ($sectiom,$password,$fileonly,$archive,$admin,@posts)=@_;
 	my ($post);
 
 	check_password($admin,ADMIN_PASS) if($admin);
@@ -1118,11 +1125,11 @@ sub delete_stuff($$$$@)
 
 	foreach $post (@posts)
 	{
-		delete_post($post,$password,$fileonly,$archive);
+		delete_post($section,$post,$password,$fileonly,$archive);
 	}
 
 	# update the cached HTML pages
-	build_cache();
+	build_cache($section);
 
 	if($admin)
 	{ make_http_forward(get_script_name()."?admin=$admin&task=mpanel",ALTERNATE_REDIRECT); }
@@ -1130,16 +1137,16 @@ sub delete_stuff($$$$@)
 	{ make_http_forward(HTML_SELF,ALTERNATE_REDIRECT); }
 }
 
-sub delete_post($$$$)
+sub delete_post($$$$$)
 {
-	my ($post,$password,$fileonly,$archiving)=@_;
+	my ($section,$post,$password,$fileonly,$archiving)=@_;
 	my ($sth,$row,$res,$reply);
 	my $thumb=THUMB_DIR;
 	my $archive=ARCHIVE_DIR;
 	my $src=IMG_DIR;
 
-	$sth=$dbh->prepare("SELECT * FROM ".SQL_TABLE." WHERE num=?;") or make_error(S_SQLFAIL);
-	$sth->execute($post) or make_error(S_SQLFAIL);
+	$sth=$dbh->prepare("SELECT * FROM ".SQL_TABLE." WHERE num=? AND section=?;") or make_error(S_SQLFAIL);
+	$sth->execute($post,$section) or make_error(S_SQLFAIL);
 
 	if($row=$sth->fetchrow_hashref())
 	{
@@ -1148,8 +1155,8 @@ sub delete_post($$$$)
 		unless($fileonly)
 		{
 			# remove files from comment and possible replies
-			$sth=$dbh->prepare("SELECT image,thumbnail FROM ".SQL_TABLE." WHERE num=? OR parent=?") or make_error(S_SQLFAIL);
-			$sth->execute($post,$post) or make_error(S_SQLFAIL);
+			$sth=$dbh->prepare("SELECT image,thumbnail FROM ".SQL_TABLE." WHERE (num=? AND section=?) OR parent=?") or make_error(S_SQLFAIL);
+			$sth->execute($post,$section,$post) or make_error(S_SQLFAIL);
 
 			while($res=$sth->fetchrow_hashref())
 			{
@@ -1170,8 +1177,8 @@ sub delete_post($$$$)
 			}
 
 			# remove post and possible replies
-			$sth=$dbh->prepare("DELETE FROM ".SQL_TABLE." WHERE num=? OR parent=?;") or make_error(S_SQLFAIL);
-			$sth->execute($post,$post) or make_error(S_SQLFAIL);
+			$sth=$dbh->prepare("DELETE FROM ".SQL_TABLE." WHERE (num=? AND section=?) OR parent=?;") or make_error(S_SQLFAIL);
+			$sth->execute($post,$section,$post) or make_error(S_SQLFAIL);
 		}
 		else # remove just the image and update the database
 		{
@@ -1183,8 +1190,8 @@ sub delete_post($$$$)
 				unlink $$row{image};
 				unlink $$row{thumbnail} if($$row{thumbnail}=~/^$thumb/);
 
-				$sth=$dbh->prepare("UPDATE ".SQL_TABLE." SET size=0,md5=null,thumbnail=null WHERE num=?;") or make_error(S_SQLFAIL);
-				$sth->execute($post) or make_error(S_SQLFAIL);
+				$sth=$dbh->prepare("UPDATE ".SQL_TABLE." SET size=0,md5=null,thumbnail=null WHERE (num=? AND section=?);") or make_error(S_SQLFAIL);
+				$sth->execute($posti,$section) or make_error(S_SQLFAIL);
 			}
 		}
 
@@ -1222,12 +1229,12 @@ sub delete_post($$$$)
 			}
 			else # removing parent image
 			{
-				build_thread_cache($$row{num});
+				build_thread_cache($section,$$row{num});
 			}
 		}
-		else # removing a reply, or a reply's image
+		else # removing a reply, or a replys image
 		{
-			build_thread_cache($$row{parent});
+			build_thread_cache($section,$$row{parent});
 		}
 	}
 }
@@ -1427,17 +1434,17 @@ sub do_logout()
 	make_http_forward(get_script_name()."?task=admin",ALTERNATE_REDIRECT);
 }
 
-sub do_rebuild_cache($)
+sub do_rebuild_cache($$)
 {
-	my ($admin)=@_;
+	my ($section,$admin)=@_;
 
 	check_password($admin,ADMIN_PASS);
 
 	unlink glob RES_DIR.'*';
 
 	repair_database();
-	build_thread_cache_all();
-	build_cache();
+	build_thread_cache_all($section);
+	build_cache($section);
 
 	make_http_forward(HTML_SELF,ALTERNATE_REDIRECT);
 }
@@ -1470,18 +1477,19 @@ sub remove_admin_entry($$)
 	make_http_forward(get_script_name()."?admin=$admin&task=bans",ALTERNATE_REDIRECT);
 }
 
-sub delete_all($$$)
+sub delete_all($$$$)
 {
-	my ($admin,$ip,$mask)=@_;
+	# TODO Allow delete all messages from whole board or concrete section
+	my ($section,$admin,$ip,$mask)=@_;
 	my ($sth,$row,@posts);
 
 	check_password($admin,ADMIN_PASS);
 
-	$sth=$dbh->prepare("SELECT num FROM ".SQL_TABLE." WHERE ip & ? = ? & ?;") or make_error(S_SQLFAIL);
-	$sth->execute($mask,$ip,$mask) or make_error(S_SQLFAIL);
+	$sth=$dbh->prepare("SELECT num FROM ".SQL_TABLE." WHERE ip & ? = ? & ? AND section = ?;") or make_error(S_SQLFAIL);
+	$sth->execute($mask,$ip,$mask,$section) or make_error(S_SQLFAIL);
 	while($row=$sth->fetchrow_hashref()) { push(@posts,$$row{num}); }
 
-	delete_stuff('',0,0,$admin,@posts);
+	delete_stuff($section,'',0,0,$admin,@posts);
 }
 
 sub update_spam_file($$)
@@ -1512,7 +1520,7 @@ sub do_nuke_database($)
 	unlink glob THUMB_DIR.'*';
 	unlink glob RES_DIR.'*';
 
-	build_cache();
+	build_cache($boardName);
 
 	make_http_forward(HTML_SELF,ALTERNATE_REDIRECT);
 }
@@ -1652,34 +1660,55 @@ sub init_database()
 	my ($sth);
 	
 	eval { $dbh->do("DROP TABLE ".SQL_TABLE.";") } or do {};
+	eval { $dbh->do("DROP TABLE ".SQL_COUNTERS_TABLE.";") } or do {};
 
-	$sth=$dbh->prepare("CREATE TABLE ".SQL_TABLE." (".
 
-	"parent INTEGER,".			# Parent post for replies in threads. For original posts, must be set to 0 (and not null)
-	"timestamp INTEGER,".		# Timestamp in seconds for when the post was created
-	"lasthit INTEGER,".			# Last activity in thread. Must be set to the same value for BOTH the original post and all replies!
-	"ip ".get_sql_ip().",".					# IP number of poster, in integer form!
+	eval {
+		$dbh->begin_work();
 
-	"date TEXT,".				# The date, as a string
-	"name TEXT,".				# Name of the poster
-	"trip TEXT,".				# Tripcode (encoded)
-	"email TEXT,".				# Email address
-	"subject TEXT,".			# Subject
-	"password TEXT,".			# Deletion password (in plaintext) 
-	"comment TEXT,".			# Comment text, HTML encoded.
+		$sth=$dbh->prepare("CREATE TABLE ".SQL_TABLE." (".
 
-	"image TEXT,".				# Image filename with path and extension (IE, src/1081231233721.jpg)
-	"size INTEGER,".			# File size in bytes
-	"md5 TEXT,".				# md5 sum in hex
-	"width INTEGER,".			# Width of image in pixels
-	"height INTEGER,".			# Height of image in pixels
-	"thumbnail TEXT,".			# Thumbnail filename with path and extension
-	"tn_width TEXT,".			# Thumbnail width in pixels
-	"tn_height TEXT,".			# Thumbnail height in pixels
-	"num ".get_sql_autoincrement()."".	# Post number, auto-increments
+		"parent INTEGER,".			# Parent post for replies in threads. For original posts, must be set to 0 (and not null)
+		"timestamp INTEGER,".	 		# Timestamp in seconds for when the post was created
+		"lasthit INTEGER,".			# Last activity in thread. Must be set to the same value for BOTH the original post and all replies!
+		"ip ".get_sql_ip().",".			# IP number of poster, in integer form!
 
-	");") or make_error(S_SQLFAIL);
-	$sth->execute() or make_error(S_SQLFAIL);
+		"date TEXT,".				# The date, as a string
+		"name TEXT,".				# Name of the poster
+		"trip TEXT,".				# Tripcode (encoded)
+		"email TEXT,".				# Email address
+		"subject TEXT,".			# Subject
+		"password TEXT,".			# Deletion password (in plaintext) 
+		"comment TEXT,".			# Comment text, HTML encoded.
+
+		"image TEXT,".				# Image filename with path and extension (IE, src/1081231233721.jpg)
+		"size INTEGER,".			# File size in bytes
+		"md5 TEXT,".				# md5 sum in hex
+		"width INTEGER,".			# Width of image in pixels
+		"height INTEGER,".			# Height of image in pixels
+		"thumbnail TEXT,".			# Thumbnail filename with path and extension
+		"tn_width TEXT,".			# Thumbnail width in pixels
+		"tn_height TEXT,".			# Thumbnail height in pixels
+		"section CHAR(64),".			# Board section
+		"num INTEGER".				# Post number, retreive it from counters
+		");");
+		$sth->execute();
+
+		$sth=$dbh->prepare("CREATE TABLE ".SQL_COUNTERS_TABLE." (".
+		"section CHAR(64),".			# Board section
+		"counter INTEGER".			# Messages counter
+		");");
+		$sth->execute();
+
+		$sth=$dbh->prepare("INSERT INTO ".SQL_COUNTERS_TABLE." VALUES (?,?);");
+		$sth->execute($boardName,0);
+
+		$dbh->commit();
+	};
+	if ($@) {
+		$dbh->rollback();
+		make_error(S_SQLFAIL);
+	}
 }
 
 sub init_admin_database()
@@ -1693,8 +1722,8 @@ sub init_admin_database()
 	"num ".get_sql_autoincrement().",".	# Entry number, auto-increments
 	"type TEXT,".				# Type of entry (ipban, wordban, etc)
 	"comment TEXT,".			# Comment for the entry
-	"ival1 ".get_sql_ip().",".			# Integer value 1 (usually IP)
-	"ival2 ".get_sql_ip().",".			# Integer value 2 (usually netmask)
+	"ival1 ".get_sql_ip().",".		# Integer value 1 (usually IP)
+	"ival2 ".get_sql_ip().",".		# Integer value 2 (usually netmask)
 	"sval1 TEXT".				# String value 1
 
 	");") or make_error(S_SQLFAIL);
@@ -1733,8 +1762,8 @@ sub repair_database()
 		# fix lasthit
 		my ($upd);
 
-		$upd=$dbh->prepare("UPDATE ".SQL_TABLE." SET lasthit=? WHERE parent=?;") or make_error(S_SQLFAIL);
-		$upd->execute($$thread{lasthit},$$thread{num}) or make_error(S_SQLFAIL." ".$dbh->errstr());
+		$upd=$dbh->prepare("UPDATE ".SQL_TABLE." SET lasthit=? WHERE parent=? AND section=?;") or make_error(S_SQLFAIL);
+		$upd->execute($$thread{lasthit},$$thread{num},$$thread{section}) or make_error(S_SQLFAIL." ".$dbh->errstr());
 	}
 }
 
@@ -1759,8 +1788,9 @@ sub get_sql_ip()
 }
 
 
-sub trim_database()
+sub trim_database($)
 {
+	my ($section) = @_;
 	my ($sth,$row,$order);
 
 	if(TRIM_METHOD==0) { $order='num ASC'; }
@@ -1770,12 +1800,12 @@ sub trim_database()
 	{
 		my $mintime=time()-(MAX_AGE)*3600;
 
-		$sth=$dbh->prepare("SELECT * FROM ".SQL_TABLE." WHERE parent=0 AND timestamp<=$mintime;") or make_error(S_SQLFAIL);
-		$sth->execute() or make_error(S_SQLFAIL);
+		$sth=$dbh->prepare("SELECT * FROM ".SQL_TABLE." WHERE parent=0 AND timestamp<=$mintime AND section=?;") or make_error(S_SQLFAIL);
+		$sth->execute($section) or make_error(S_SQLFAIL);
 
 		while($row=$sth->fetchrow_hashref())
 		{
-			delete_post($$row{num},"",0,ARCHIVE_MODE);
+			delete_post($section,$$row{num},"",0,ARCHIVE_MODE);
 		}
 	}
 
@@ -1787,14 +1817,14 @@ sub trim_database()
 
 	while($threads>$max_threads or $posts>$max_posts or $size>$max_size)
 	{
-		$sth=$dbh->prepare("SELECT * FROM ".SQL_TABLE." WHERE parent=0 ORDER BY $order LIMIT 1;") or make_error(S_SQLFAIL);
-		$sth->execute() or make_error(S_SQLFAIL);
+		$sth=$dbh->prepare("SELECT * FROM ".SQL_TABLE." WHERE parent=0 AND section=? ORDER BY $order LIMIT 1;") or make_error(S_SQLFAIL);
+		$sth->execute($section) or make_error(S_SQLFAIL);
 
 		if($row=$sth->fetchrow_hashref())
 		{
 			my ($threadposts,$threadsize)=count_posts($$row{num});
 
-			delete_post($$row{num},"",0,ARCHIVE_MODE);
+			delete_post($section,$$row{num},"",0,ARCHIVE_MODE);
 
 			$threads--;
 			$posts-=$threadposts;
