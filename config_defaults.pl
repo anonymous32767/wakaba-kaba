@@ -12,6 +12,7 @@ BEGIN {
 	die S_NOSQL unless(defined &SQL_USERNAME);
 	die S_NOSQL unless(defined &SQL_PASSWORD);
 
+	eval "use constant SERVER_CONCURRENCY => 10" unless(defined &SERVER_CONCURRENCY);
 	eval "use constant SQL_TABLE => 'comments'" unless(defined &SQL_TABLE);
 	eval "use constant SQL_ADMIN_TABLE => 'admin'" unless(defined &SQL_ADMIN_TABLE);
 	eval "use constant SQL_PROXY_TABLE => 'proxy'" unless(defined &SQL_PROXY_TABLE);

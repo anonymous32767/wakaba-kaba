@@ -5,7 +5,10 @@ use CGI::Carp qw(fatalsToBrowser);
 use strict;
 
 use CGI::Fast;
+use FCGI::ProcManager qw(pm_manage pm_pre_dispatch
+                         pm_post_dispatch);
 use DBI;
+
 
 use lib '.';
 BEGIN { require "config.pl"; }
@@ -13,9 +16,9 @@ BEGIN { require "config_defaults.pl"; }
 BEGIN { require "strings_en.pl"; }
 BEGIN { require "wakautils.pl"; }
 
-
-
 return 1 if(caller);
+
+pm_manage(n_processes => SERVER_CONCURRENCY);
 
 my $font_height=8;
 my %font=(
@@ -57,6 +60,8 @@ my ($query, $key, $selector, $style, $ip, $word, $timestamp,
 @background=(0xff,0xff,0xff);
 
 while ($query=new CGI::Fast) {
+	pm_pre_dispatch();
+
 	$key=($query->param("key") or 'default');
 	$selector=($query->param("selector") or ".captcha");
 	$style=($query->cookie("wakabastyle") or DEFAULT_STYLE);
@@ -83,6 +88,8 @@ while ($query=new CGI::Fast) {
 	binmode STDOUT;
 
 	make_image($word);
+	
+	pm_post_dispatch();
 }
 
 #

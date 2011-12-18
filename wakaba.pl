@@ -5,8 +5,9 @@ use CGI::Carp qw(fatalsToBrowser);
 # use strict;
 
 use CGI::Fast;
+use FCGI::ProcManager qw(pm_manage pm_pre_dispatch 
+                         pm_post_dispatch);
 use DBI;
-
 
 #
 # Import settings
@@ -20,7 +21,7 @@ BEGIN { require "futaba_style.pl"; }	# edit this line to change the board style
 BEGIN { require "captcha.pl"; }
 BEGIN { require "wakautils.pl"; }
 
-
+pm_manage(n_processes => SERVER_CONCURRENCY);
 
 #
 # Optional modules
@@ -60,6 +61,8 @@ if(!table_exists(SQL_TABLE)) # check for comments table
 }
 
 while (my $query=new CGI::Fast) {
+	pm_pre_dispatch();
+
 	my $task=($query->param("task") or $query->param("action"));
 
   	if(!$task)
@@ -207,6 +210,8 @@ while (my $query=new CGI::Fast) {
 		my $admin=$query->param("admin");
 		do_nuke_database($admin);
 	}
+
+	pm_post_dispatch();
 }
 
 

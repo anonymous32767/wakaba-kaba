@@ -13,8 +13,8 @@ use constant ADMIN_PASS => '';			# Admin password. For fucks's sake, change this
 use constant NUKE_PASS => '';			# Password to nuke a board. Change this too, NOW!
 use constant SECRET => '';				# Cryptographic secret. CHANGE THIS to something totally random, and long.
 use constant SQL_DBI_SOURCE => 'DBI:Pg:dbname=wakabakaba;host=localhost'; # DBI data source string 
-use constant SQL_USERNAME => '';		# PostgreSQL login name
-use constant SQL_PASSWORD => '';		# PostgreSQL password
+use constant SQL_USERNAME => 'wakaba';		# PostgreSQL login name
+use constant SQL_PASSWORD => 'abakaw';		# PostgreSQL password
 ##use constant SQL_DBI_SOURCE => 'dbi:SQLite:dbname=wakaba.sql';		# DBI data source string (SQLite version, put database filename in here)
 ##use constant SQL_USERNAME => '';				# Not used by SQLite
 ##use constant SQL_PASSWORD => '';				# Not used by SQLite
