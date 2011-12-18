@@ -13,6 +13,11 @@ my $has_encode=0;
 eval 'use Encode qw(decode)';
 $has_encode=1 unless $@;
 
+my $has_graphicsmagick=0;
+eval 'use Graphics::Magick';
+$has_graphicsmagick=1 unless($@);
+
+
 
 use constant MAX_UNICODE => 1114111;
 
@@ -1194,6 +1199,20 @@ sub analyze_gif($)
 sub make_thumbnail($$$$$;$)
 {
 	my ($filename,$thumbnail,$width,$height,$quality,$convert)=@_;
+
+	# At very first try GraphicsMagick
+
+	if ($has_graphicsmagick) {
+		eval {
+			my $image;
+			$image = Graphics::Magick->new;
+			$image->Read($filename);
+			$image->Resize(geometry=>'${width}x${height}');
+			$image->Write($thumbnail);
+		}
+	}
+	
+	return 1 unless($@);
 
 	# first try ImageMagick
 
