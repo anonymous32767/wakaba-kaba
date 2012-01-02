@@ -8,6 +8,7 @@ use CGI::Fast;
 use FCGI::ProcManager qw(pm_manage pm_pre_dispatch 
                          pm_post_dispatch);
 use DBI;
+use JSON;
 
 #
 # Import settings
@@ -16,6 +17,7 @@ use DBI;
 use lib '.';
 BEGIN { require "config.pl"; }
 BEGIN { require "config_defaults.pl"; }
+BEGIN { require "default_settings.pl"; }
 BEGIN { require "strings_en.pl"; }		# edit this line to change the language
 BEGIN { require "futaba_style.pl"; }	# edit this line to change the board style
 BEGIN { require "captcha.pl"; }
@@ -29,7 +31,7 @@ pm_manage(n_processes => SERVER_CONCURRENCY);
 
 my ($has_encode);
 
-if(CONVERT_CHARSETS)
+if($$cfg{CONVERT_CHARSETS})
 {
 	eval 'use Encode qw(decode encode)';
 	$has_encode=1 unless($@);
@@ -41,7 +43,8 @@ if(CONVERT_CHARSETS)
 # Global init
 #
 
-my $boardName = "test"; # TEMPORARY
+my $boardName = ''; 
+our $cfg = {};
 
 my $protocol_re=qr/(?:http|https|ftp|mailto|nntp)/;
 
@@ -55,11 +58,16 @@ init_admin_database() if(!table_exists(SQL_ADMIN_TABLE));
 # check for proxy table
 init_proxy_database() if(!table_exists(SQL_PROXY_TABLE));
 
+if(!table_exists(SQL_SETTINGS_TABLE)) # check for settings table
+{
+	init_settings_database();
+}
+
 if(!table_exists(SQL_TABLE)) # check for comments table
 {
-		  init_database();
-		  build_cache($boardName);
-		  make_http_forward(HTML_SELF,ALTERNATE_REDIRECT);
+	init_database();
+	build_cache($boardName);
+	make_http_forward($$cfg{HTML_SELF},$$cfg{ALTERNATE_REDIRECT});
 }
 
 while (my $query=new CGI::Fast) {
@@ -67,10 +75,13 @@ while (my $query=new CGI::Fast) {
 
 	my $task=($query->param("task") or $query->param("action"));
 
+	$boardName = ($query->param("section") or '');
+	$cfg = fetch_config($boardName);
+
   	if(!$task)
 	{
-		build_cache($boardName) unless -e HTML_SELF;
-		make_http_forward(HTML_SELF,ALTERNATE_REDIRECT);
+		build_cache($boardName) unless -e $$cfg{HTML_SELF};
+		make_http_forward($$cfg{HTML_SELF},$$cfg{ALTERNATE_REDIRECT});
 	}
 	elsif($task eq "post")
 	{
@@ -164,7 +175,7 @@ while (my $query=new CGI::Fast) {
 		my $type=$query->param("type");
 		my $ip=$query->param("ip");
 		my $timestamp=$query->param("timestamp");
-		my $date=make_date(time(),DATE_STYLE);
+		my $date=make_date(time(),$$cfg{DATE_STYLE});
 		add_proxy_entry($admin,$type,$ip,$timestamp,$date);
 	}
 	elsif($task eq "removeproxy")
@@ -263,7 +274,7 @@ sub build_cache($)
 
 		my $total=get_page_count(scalar @threads);
 		my @pagethreads;
-		while(@pagethreads=splice @threads,0,IMAGES_PER_PAGE)
+		while(@pagethreads=splice @threads,0,$$cfg{IMAGES_PER_PAGE})
 		{
 			build_cache_page($page,$total,@pagethreads);
 			$page++;
@@ -271,9 +282,9 @@ sub build_cache($)
 	}
 
 	# check for and remove old pages
-	while(-e $page.PAGE_EXT)
+	while(-e $page.$$cfg{PAGE_EXT})
 	{
-		unlink $page.PAGE_EXT;
+		unlink $page.$$cfg{PAGE_EXT};
 		$page++;
 	}
 }
@@ -283,8 +294,8 @@ sub build_cache_page($$@)
 	my ($page,$total,@threads)=@_;
 	my ($filename,$tmpname);
 
-	if($page==0) { $filename=HTML_SELF; }
-	else { $filename=$page.PAGE_EXT; }
+	if($page==0) { $filename=$$cfg{HTML_SELF}; }
+	else { $filename=$page.$$cfg{PAGE_EXT}; }
 
 	# do abbrevations and such
 	foreach my $thread (@threads)
@@ -295,8 +306,8 @@ sub build_cache_page($$@)
 		my $images=grep { $$_{image} } @replies;
 		my $curr_replies=$replies;
 		my $curr_images=$images;
-		my $max_replies=REPLIES_PER_THREAD;
-		my $max_images=(IMAGE_REPLIES_PER_THREAD or $images);
+		my $max_replies=$$cfg{REPLIES_PER_THREAD};
+		my $max_images=($$cfg{IMAGE_REPLIES_PER_THREAD} or $images);
 
 		# drop replies until we have few enough replies and images
 		while($curr_replies>$max_replies or $curr_images>$max_images)
@@ -314,7 +325,7 @@ sub build_cache_page($$@)
 		# abbreviate the remaining posts
 		foreach my $post (@{$$thread{posts}})
 		{
-			my $abbreviation=abbreviate_html($$post{comment},MAX_LINES_SHOWN,APPROX_LINE_LENGTH);
+			my $abbreviation=abbreviate_html($$post{comment},$$cfg{MAX_LINES_SHOWN},$$cfg{APPROX_LINE_LENGTH});
 			if($abbreviation)
 			{
 				$$post{comment}=$abbreviation;
@@ -327,8 +338,8 @@ sub build_cache_page($$@)
 	my @pages=map +{ page=>$_ },(0..$total-1);
 	foreach my $p (@pages)
 	{
-		if($$p{page}==0) { $$p{filename}=expand_filename(HTML_SELF) } # first page
-		else { $$p{filename}=expand_filename($$p{page}.PAGE_EXT) }
+		if($$p{page}==0) { $$p{filename}=expand_filename($$cfg{HTML_SELF}) } # first page
+		else { $$p{filename}=expand_filename($$p{page}.$$cfg{PAGE_EXT}) }
 		if($$p{page}==$page) { $$p{current}=1 } # current page, no link
 	}
 
@@ -337,9 +348,11 @@ sub build_cache_page($$@)
 	$nextpage=$pages[$page+1]{filename} if($page!=$total-1);
 
 	print_page($filename,PAGE_TEMPLATE->(
-		postform=>(ALLOW_TEXTONLY or ALLOW_IMAGES),
-		image_inp=>ALLOW_IMAGES,
-		textonly_inp=>(ALLOW_IMAGES and ALLOW_TEXTONLY),
+		cfg=>$cfg,
+		stylesheets=>get_stylesheets($$cfg{DEFAULT_STYLE}, $$cfg{CSS_DIR}),
+		postform=>($$cfg{ALLOW_TEXTONLY} or $$cfg{ALLOW_IMAGES}),
+		image_inp=>$$cfg{ALLOW_IMAGES},
+		textonly_inp=>($$cfg{ALLOW_IMAGES} and $$cfg{ALLOW_TEXTONLY}),
 		prevpage=>$prevpage,
 		nextpage=>$nextpage,
 		pages=>\@pages,
@@ -360,12 +373,12 @@ sub build_thread_cache($$)
 
 	make_error(S_NOTHREADERR) if($thread[0]{parent});
 
-	$filename=RES_DIR.$thread.PAGE_EXT;
+	$filename=$$cfg{RES_DIR}.$thread.$$cfg{PAGE_EXT};
 
 	print_page($filename,PAGE_TEMPLATE->(
 		thread=>$thread,
-		postform=>(ALLOW_TEXT_REPLIES or ALLOW_IMAGE_REPLIES),
-		image_inp=>ALLOW_IMAGE_REPLIES,
+		postform=>($$cfg{ALLOW_TEXT_REPLIES} or $$cfg{ALLOW_IMAGE_REPLIES}),
+		image_inp=>$$cfg{ALLOW_IMAGE_REPLIES},
 		textonly_inp=>0,
 		dummy=>$thread[$#thread]{num},
 		threads=>[{posts=>\@thread}])
@@ -378,11 +391,11 @@ sub print_page($$)
 
 	$contents=encode_string($contents);
 #		$PerlIO::encoding::fallback=0x0200 if($has_encode);
-#		binmode PAGE,':encoding('.CHARSET.')' if($has_encode);
+#		binmode PAGE,':encoding('.$$cfg{CHARSET}.')' if($has_encode);
 
 	if(USE_TEMPFILES)
 	{
-		my $tmpname=RES_DIR.'tmp'.int(rand(1000000000));
+		my $tmpname=$$cfg{RES_DIR}.'tmp'.int(rand(1000000000));
 
 		open (PAGE,">$tmpname") or make_error(S_NOTWRITE);
 		print PAGE $contents;
@@ -440,13 +453,13 @@ sub post_stuff($$$$$$$$$$$$$$$)
 		# check what kind of posting is allowed
 		if($parent)
 		{
-			make_error(S_NOTALLOWED) if($file and !ALLOW_IMAGE_REPLIES);
-			make_error(S_NOTALLOWED) if(!$file and !ALLOW_TEXT_REPLIES);
+			make_error(S_NOTALLOWED) if($file and !$$cfg{ALLOW_IMAGE_REPLIES});
+			make_error(S_NOTALLOWED) if(!$file and !$$cfg{ALLOW_TEXT_REPLIES});
 		}
 		else
 		{
-			make_error(S_NOTALLOWED) if($file and !ALLOW_IMAGES);
-			make_error(S_NOTALLOWED) if(!$file and !ALLOW_TEXTONLY);
+			make_error(S_NOTALLOWED) if($file and !$$cfg{ALLOW_IMAGES});
+			make_error(S_NOTALLOWED) if(!$file and !$$cfg{ALLOW_TEXTONLY});
 		}
 	}
 
@@ -458,10 +471,10 @@ sub post_stuff($$$$$$$$$$$$$$$)
 	make_error(S_UNUSUAL) if($subject=~/[\n\r]/);
 
 	# check for excessive amounts of text
-	make_error(S_TOOLONG) if(length($name)>MAX_FIELD_LENGTH);
-	make_error(S_TOOLONG) if(length($email)>MAX_FIELD_LENGTH);
-	make_error(S_TOOLONG) if(length($subject)>MAX_FIELD_LENGTH);
-	make_error(S_TOOLONG) if(length($comment)>MAX_COMMENT_LENGTH);
+	make_error(S_TOOLONG) if(length($name)>$$cfg{MAX_FIELD_LENGTH});
+	make_error(S_TOOLONG) if(length($email)>$$cfg{MAX_FIELD_LENGTH});
+	make_error(S_TOOLONG) if(length($subject)>$$cfg{MAX_FIELD_LENGTH});
+	make_error(S_TOOLONG) if(length($comment)>$$cfg{MAX_COMMENT_LENGTH});
 
 	# check to make sure the user selected a file, or clicked the checkbox
 	make_error(S_NOPIC) if(!$parent and !$file and !$nofile and !$admin);
@@ -488,7 +501,7 @@ sub post_stuff($$$$$$$$$$$$$$$)
 
 	# process the tripcode - maybe the string should be decoded later
 	my $trip;
-	($name,$trip)=process_tripcode($name,TRIPKEY,SECRET,CHARSET);
+	($name,$trip)=process_tripcode($name,$$cfg{TRIPKEY},SECRET,$$cfg{CHARSET});
 
 	# check for bans
 	ban_check($numip,$c_name,$subject,$comment) unless $whitelisted;
@@ -496,14 +509,14 @@ sub post_stuff($$$$$$$$$$$$$$$)
 	# spam check
 	spam_engine(
 		query=>$query,
-		trap_fields=>SPAM_TRAP?["name","link"]:[],
+		trap_fields=>$$cfg{SPAM_TRAP}?["name","link"]:[],
 		spam_files=>[SPAM_FILES],
-		charset=>CHARSET,
+		charset=>$$cfg{CHARSET},
 		included_fields=>["field1","field2","field3","field4"],
 	) unless $whitelisted;
 
 	# check captcha
-	check_captcha($dbh,$captcha,$ip,$parent) if(ENABLE_CAPTCHA and !$no_captcha and !is_trusted($trip));
+	check_captcha($dbh,$captcha,$ip,$parent) if($$cfg{ENABLE_CAPTCHA} and !$no_captcha and !is_trusted($trip));
 
 	# proxy check
 	proxy_check($ip) if (!$whitelisted and ENABLE_PROXY_CHECK);
@@ -522,7 +535,7 @@ sub post_stuff($$$$$$$$$$$$$$$)
 
 
 	# kill the name if anonymous posting is being enforced
-	if(FORCED_ANON)
+	if($$cfg{FORCED_ANON})
 	{
 		$name='';
 		$trip='';
@@ -531,21 +544,21 @@ sub post_stuff($$$$$$$$$$$$$$$)
 	}
 
 	# clean up the inputs
-	$email=clean_string(decode_string($email,CHARSET));
-	$subject=clean_string(decode_string($subject,CHARSET));
+	$email=clean_string(decode_string($email,$$cfg{CHARSET}));
+	$subject=clean_string(decode_string($subject,$$cfg{CHARSET}));
 
 	# fix up the email/link
 	$email="mailto:$email" if $email and $email!~/^$protocol_re:/;
 
 	# format comment
-	$comment=format_comment(clean_string(decode_string($comment,CHARSET))) unless $no_format;
+	$comment=format_comment(clean_string(decode_string($comment,$$cfg{CHARSET}))) unless $no_format;
 	$comment.=$postfix;
 
 	# insert default values for empty fields
 	$parent=0 unless $parent;
 	$name=make_anonymous($ip,$time) unless $name or $trip;
-	$subject=S_ANOTITLE unless $subject;
-	$comment=S_ANOTEXT unless $comment;
+	$subject=$$cfg{S_ANOTITLE} unless $subject;
+	$comment=$$cfg{S_ANOTEXT} unless $comment;
 
 	# flood protection - must happen after inputs have been cleaned up
 	flood_check($numip,$time,$comment,$file);
@@ -553,10 +566,10 @@ sub post_stuff($$$$$$$$$$$$$$$)
 	# Manager and deletion stuff - duuuuuh?
 
 	# generate date
-	my $date=make_date($time,DATE_STYLE);
+	my $date=make_date($time,$$cfg{DATE_STYLE});
 
 	# generate ID code if enabled
-	$date.=' ID:'.make_id_code($ip,$time,$email) if(DISPLAY_ID);
+	$date.=' ID:'.make_id_code($ip,$time,$email) if($$cfg{DISPLAY_ID});
 
 	# copy file, do checksums, make thumbnail, etc
 	my ($filename,$md5,$width,$height,$thumbnail,$tn_width,$tn_height)=process_file($file,$uploadname,$time) if($file);
@@ -589,7 +602,7 @@ sub post_stuff($$$$$$$$$$$$$$$)
 	if($parent) # bumping
 	{
 		# check for sage, or too many replies
-		unless($email=~/sage/i or sage_count($parent_res)>MAX_RES)
+		unless($email=~/sage/i or sage_count($parent_res)>$$cfg{MAX_RES})
 		{
 			$sth=$dbh->prepare("UPDATE ".SQL_TABLE." SET lasthit=$time WHERE (num=? OR parent=?) AND section=?;") or make_error(S_SQLFAIL);
 			$sth->execute($parent,$parent,$section) or make_error(S_SQLFAIL);
@@ -607,10 +620,10 @@ sub post_stuff($$$$$$$$$$$$$$$)
 
 	# set the name, email and password cookies
 	make_cookies(name=>$c_name,email=>$c_email,password=>$c_password,
-	-charset=>CHARSET,-autopath=>COOKIE_PATH); # yum!
+	-charset=>$$cfg{CHARSET},-autopath=>$$cfg{COOKIE_PATH}); # yum!
 
 	# forward back to the main page
-	make_http_forward(HTML_SELF,ALTERNATE_REDIRECT);
+	make_http_forward($$cfg{HTML_SELF},$$cfg{ALTERNATE_REDIRECT});
 }
 
 sub is_whitelisted($)
@@ -680,7 +693,7 @@ sub flood_check($$$$)
 	if($file)
 	{
 		# check for to quick file posts
-		$maxtime=$time-(RENZOKU2);
+		$maxtime=$time-($$cfg{RENZOKU2});
 		$sth=$dbh->prepare("SELECT count(*) FROM ".SQL_TABLE." WHERE ip=? AND timestamp>$maxtime;") or make_error(S_SQLFAIL);
 		$sth->execute($ip) or make_error(S_SQLFAIL);
 		make_error(S_RENZOKU2) if(($sth->fetchrow_array())[0]);
@@ -688,13 +701,13 @@ sub flood_check($$$$)
 	else
 	{
 		# check for too quick replies or text-only posts
-		$maxtime=$time-(RENZOKU);
+		$maxtime=$time-($$cfg{RENZOKU});
 		$sth=$dbh->prepare("SELECT count(*) FROM ".SQL_TABLE." WHERE ip=? AND timestamp>$maxtime;") or make_error(S_SQLFAIL);
 		$sth->execute($ip) or make_error(S_SQLFAIL);
 		make_error(S_RENZOKU) if(($sth->fetchrow_array())[0]);
 
 		# check for repeated messages
-		$maxtime=$time-(RENZOKU3);
+		$maxtime=$time-($$cfg{RENZOKU3});
 		$sth=$dbh->prepare("SELECT count(*) FROM ".SQL_TABLE." WHERE ip=? AND comment=? AND timestamp>$maxtime;") or make_error(S_SQLFAIL);
 		$sth->execute($ip,$comment) or make_error(S_SQLFAIL);
 		make_error(S_RENZOKU3) if(($sth->fetchrow_array())[0]);
@@ -719,7 +732,7 @@ sub proxy_check($)
 	$sth->execute($ip) or make_error(S_SQLFAIL);
 
         my $timestamp=time();
-        my $date=make_date($timestamp,DATE_STYLE);
+        my $date=make_date($timestamp,$$cfg{DATE_STYLE});
 
 	if(($sth->fetchrow_array())[0])
 	{	# known good IP, refresh entry
@@ -770,7 +783,7 @@ sub add_proxy_entry($$$$$)
 	$sth=$dbh->prepare("INSERT INTO ".SQL_PROXY_TABLE." VALUES(null,?,?,?,?);") or make_error(S_SQLFAIL);
 	$sth->execute($type,$ip,$timestamp,$date) or make_error(S_SQLFAIL);
 
-        make_http_forward(get_script_name()."?admin=$admin&task=proxy",ALTERNATE_REDIRECT);
+        make_http_forward(get_script_name()."?admin=$admin&task=proxy",$$cfg{ALTERNATE_REDIRECT});
 }
 
 sub proxy_clean()
@@ -805,7 +818,7 @@ sub remove_proxy_entry($$)
 	$sth=$dbh->prepare("DELETE FROM ".SQL_PROXY_TABLE." WHERE num=?;") or make_error(S_SQLFAIL);
 	$sth->execute($num) or make_error(S_SQLFAIL);
 
-	make_http_forward(get_script_name()."?admin=$admin&task=proxy",ALTERNATE_REDIRECT);
+	make_http_forward(get_script_name()."?admin=$admin&task=proxy",$$cfg{ALTERNATE_REDIRECT});
 }
 
 sub format_comment($)
@@ -828,7 +841,7 @@ sub format_comment($)
 		return $line;
 	};
 
-	if(ENABLE_WAKABAMARK) { $comment=do_wakabamark($comment,$handler) }
+	if($$cfg{ENABLE_WAKABAMARK}) { $comment=do_wakabamark($comment,$handler) }
 	else { $comment="<p>".simple_format($comment,$handler)."</p>" }
 
 	# fix <blockquote> styles for old stylesheets
@@ -851,7 +864,7 @@ sub simple_format($@)
 		$line=~s{(https?://[^\s<>"]*?)((?:\s|<|>|"|\.|\)|\]|!|\?|,|&#44;|&quot;)*(?:[\s<>"]|$))}{\<a href="$1"\>$1\</a\>$2}sgi;
 
 		# colour quoted sections if working in old-style mode.
-		$line=~s!^(&gt;.*)$!\<span class="unkfunc"\>$1\</span\>!g unless(ENABLE_WAKABAMARK);
+		$line=~s!^(&gt;.*)$!\<span class="unkfunc"\>$1\</span\>!g unless($$cfg{ENABLE_WAKABAMARK});
 
 		$line=$handler->($line) if($handler);
 
@@ -864,18 +877,18 @@ sub encode_string($)
 	my ($str)=@_;
 
 	return $str unless($has_encode);
-	return encode(CHARSET,$str,0x0400);
+	return encode($$cfg{CHARSET},$str,0x0400);
 }
 
 sub make_anonymous($$)
 {
 	my ($ip,$time)=@_;
 
-	return S_ANONAME unless(SILLY_ANONYMOUS);
+	return $$cfg{S_ANONAME} unless($$cfg{SILLY_ANONYMOUS});
 
 	my $string=$ip;
-	$string.=",".int($time/86400) if(SILLY_ANONYMOUS=~/day/i);
-	$string.=",".$ENV{SCRIPT_NAME} if(SILLY_ANONYMOUS=~/board/i);
+	$string.=",".int($time/86400) if($$cfg{SILLY_ANONYMOUS}=~/day/i);
+	$string.=",".$ENV{SCRIPT_NAME} if($$cfg{SILLY_ANONYMOUS}=~/board/i);
 
 	srand unpack "N",hide_data($string,4,"silly",SECRET);
 
@@ -896,17 +909,17 @@ sub make_id_code($$$)
 {
 	my ($ip,$time,$link)=@_;
 
-	return EMAIL_ID if($link and DISPLAY_ID=~/link/i);
-	return EMAIL_ID if($link=~/sage/i and DISPLAY_ID=~/sage/i);
+	return $$cfg{EMAIL_ID} if($link and $$cfg{DISPLAY_ID}=~/link/i);
+	return $$cfg{EMAIL_ID} if($link=~/sage/i and $$cfg{DISPLAY_ID}=~/sage/i);
 
-	return resolve_host($ENV{REMOTE_ADDR}) if(DISPLAY_ID=~/host/i);
-	return $ENV{REMOTE_ADDR} if(DISPLAY_ID=~/ip/i);
+	return resolve_host($ENV{REMOTE_ADDR}) if($$cfg{DISPLAY_ID}=~/host/i);
+	return $ENV{REMOTE_ADDR} if($$cfg{DISPLAY_ID}=~/ip/i);
 
 	my $string="";
-	$string.=",".int($time/86400) if(DISPLAY_ID=~/day/i);
-	$string.=",".$ENV{SCRIPT_NAME} if(DISPLAY_ID=~/board/i);
+	$string.=",".int($time/86400) if($$cfg{DISPLAY_ID}=~/day/i);
+	$string.=",".$ENV{SCRIPT_NAME} if($$cfg{DISPLAY_ID}=~/board/i);
 
-	return mask_ip($ENV{REMOTE_ADDR},make_key("mask",SECRET,32).$string) if(DISPLAY_ID=~/mask/i);
+	return mask_ip($ENV{REMOTE_ADDR},make_key("mask",SECRET,32).$string) if($$cfg{DISPLAY_ID}=~/mask/i);
 
 	return hide_data($ip.$string,6,"id",SECRET,1);
 }
@@ -939,7 +952,7 @@ sub sage_count($)
 	my ($sth);
 
 	$sth=$dbh->prepare("SELECT count(*) FROM ".SQL_TABLE." WHERE parent=? AND NOT ( timestamp<? AND ip=? );") or make_error(S_SQLFAIL);
-	$sth->execute($$parent{num},$$parent{timestamp}+(NOSAGE_WINDOW),$$parent{ip}) or make_error(S_SQLFAIL);
+	$sth->execute($$parent{num},$$parent{timestamp}+($$cfg{NOSAGE_WINDOW}),$$parent{ip}) or make_error(S_SQLFAIL);
 
 	return ($sth->fetchrow_array())[0];
 }
@@ -952,7 +965,7 @@ sub get_file_size($)
 	@filestats=stat $file;
 	$size=$filestats[7];
 
-	make_error(S_TOOBIG) if($size>MAX_KB*1024);
+	make_error(S_TOOBIG) if($size>$$cfg{MAX_KB}*1024);
 	make_error(S_TOOBIGORNONE) if($size==0); # check for small files, too?
 
 	return($size);
@@ -971,17 +984,17 @@ sub process_file($$$)
 
 	my $known=($width or $filetypes{$ext});
 
-	make_error(S_BADFORMAT) unless(ALLOW_UNKNOWN or $known);
-	make_error(S_BADFORMAT) if(grep { $_ eq $ext } FORBIDDEN_EXTENSIONS);
-	make_error(S_TOOBIG) if(MAX_IMAGE_WIDTH and $width>MAX_IMAGE_WIDTH);
-	make_error(S_TOOBIG) if(MAX_IMAGE_HEIGHT and $height>MAX_IMAGE_HEIGHT);
-	make_error(S_TOOBIG) if(MAX_IMAGE_PIXELS and $width*$height>MAX_IMAGE_PIXELS);
+	make_error(S_BADFORMAT) unless($$cfg{ALLOW_UNKNOWN} or $known);
+	make_error(S_BADFORMAT) if(grep { $_ eq $ext } $$cfg{FORBIDDEN_EXTENSIONS});
+	make_error(S_TOOBIG) if($$cfg{MAX_IMAGE_WIDTH} and $width>$$cfg{MAX_IMAGE_WIDTH});
+	make_error(S_TOOBIG) if($$cfg{MAX_IMAGE_HEIGHT} and $height>$$cfg{MAX_IMAGE_HEIGHT});
+	make_error(S_TOOBIG) if($$cfg{MAX_IMAGE_PIXELS} and $width*$height>$$cfg{MAX_IMAGE_PIXELS});
 
 	# generate random filename - fudges the microseconds
 	my $filebase=$time.sprintf("%03d",int(rand(1000)));
-	my $filename=IMG_DIR.$filebase.'.'.$ext;
-	my $thumbnail=THUMB_DIR.$filebase."s.jpg";
-	$filename.=MUNGE_UNKNOWN unless($known);
+	my $filename=$$cfg{IMG_DIR}.$filebase.'.'.$ext;
+	my $thumbnail=$$cfg{THUMB_DIR}.$filebase."s.jpg";
+	$filename.=$$cfg{MUNGE_UNKNOWN} unless($known);
 
 	# do copying and MD5 checksum
 	my ($md5,$md5ctx,$buffer);
@@ -1044,29 +1057,29 @@ sub process_file($$$)
 			$thumbnail=undef;
 		}
 	}
-	elsif($width>MAX_W or $height>MAX_H or THUMBNAIL_SMALL)
+	elsif($width>$$cfg{MAX_W} or $height>$$cfg{MAX_H} or $$cfg{THUMBNAIL_SMALL})
 	{
-		if($width<=MAX_W and $height<=MAX_H)
+		if($width<=$$cfg{MAX_W} and $height<=$$cfg{MAX_H})
 		{
 			$tn_width=$width;
 			$tn_height=$height;
 		}
 		else
 		{
-			$tn_width=MAX_W;
-			$tn_height=int(($height*(MAX_W))/$width);
+			$tn_width=$$cfg{MAX_W};
+			$tn_height=int(($height*($$cfg{MAX_W}))/$width);
 
-			if($tn_height>MAX_H)
+			if($tn_height>$$cfg{MAX_H})
 			{
-				$tn_width=int(($width*(MAX_H))/$height);
-				$tn_height=MAX_H;
+				$tn_width=int(($width*($$cfg{MAX_H}))/$height);
+				$tn_height=$$cfg{MAX_H};
 			}
 		}
 
-		if(STUPID_THUMBNAILING) { $thumbnail=$filename }
+		if($$cfg{STUPID_THUMBNAILING}) { $thumbnail=$filename }
 		else
 		{
-			$thumbnail=undef unless(make_thumbnail($filename,$thumbnail,$tn_width,$tn_height,THUMBNAIL_QUALITY,CONVERT_COMMAND));
+			$thumbnail=undef unless(make_thumbnail($filename,$thumbnail,$tn_width,$tn_height,$$cfg{THUMBNAIL_QUALITY},CONVERT_COMMAND));
 		}
 	}
 	else
@@ -1080,7 +1093,7 @@ sub process_file($$$)
 	{
 		my $newfilename=$uploadname;
 		$newfilename=~s!^.*[\\/]!!; # cut off any directory in filename
-		$newfilename=IMG_DIR.$newfilename;
+		$newfilename=$$cfg{IMG_DIR}.$newfilename;
 
 		unless(-e $newfilename) # verify no name clash
 		{
@@ -1132,18 +1145,18 @@ sub delete_stuff($$$$@)
 	build_cache($section);
 
 	if($admin)
-	{ make_http_forward(get_script_name()."?admin=$admin&task=mpanel",ALTERNATE_REDIRECT); }
+	{ make_http_forward(get_script_name()."?admin=$admin&task=mpanel",$$cfg{ALTERNATE_REDIRECT}); }
 	else
-	{ make_http_forward(HTML_SELF,ALTERNATE_REDIRECT); }
+	{ make_http_forward($$cfg{HTML_SELF},$$cfg{ALTERNATE_REDIRECT}); }
 }
 
 sub delete_post($$$$$)
 {
 	my ($section,$post,$password,$fileonly,$archiving)=@_;
 	my ($sth,$row,$res,$reply);
-	my $thumb=THUMB_DIR;
-	my $archive=ARCHIVE_DIR;
-	my $src=IMG_DIR;
+	my $thumb=$$cfg{THUMB_DIR};
+	my $archive=$$cfg{ARCHIVE_DIR};
+	my $src=$$cfg{IMG_DIR};
 
 	$sth=$dbh->prepare("SELECT * FROM ".SQL_TABLE." WHERE num=? AND section=?;") or make_error(S_SQLFAIL);
 	$sth->execute($post,$section) or make_error(S_SQLFAIL);
@@ -1165,8 +1178,8 @@ sub delete_post($$$$$)
 				if($archiving)
 				{
 					# archive images
-					rename $$res{image}, ARCHIVE_DIR.$$res{image};
-					rename $$res{thumbnail}, ARCHIVE_DIR.$$res{thumbnail} if($$res{thumbnail}=~/^$thumb/);
+					rename $$res{image}, $$cfg{ARCHIVE_DIR}.$$res{image};
+					rename $$res{thumbnail}, $$cfg{ARCHIVE_DIR}.$$res{thumbnail} if($$res{thumbnail}=~/^$thumb/);
 				}
 				else
 				{
@@ -1202,30 +1215,30 @@ sub delete_post($$$$$)
 			{
 				if($archiving)
 				{
-					my $captcha = CAPTCHA_SCRIPT;
+					my $captcha = $$cfg{CAPTCHA_SCRIPT};
 					my $line;
 
-					open RESIN, '<', RES_DIR.$$row{num}.PAGE_EXT;
-					open RESOUT, '>', ARCHIVE_DIR.RES_DIR.$$row{num}.PAGE_EXT;
+					open RESIN, '<', $$cfg{RES_DIR}.$$row{num}.$$cfg{PAGE_EXT};
+					open RESOUT, '>', $$cfg{ARCHIVE_DIR}.$$cfg{RES_DIR}.$$row{num}.$$cfg{PAGE_EXT};
 					while($line = <RESIN>)
 					{
 						$line =~ s/img src="(.*?)$thumb/img src="$1$archive$thumb/g;
 						if(ENABLE_LOAD)
 						{
-							my $redir = REDIR_DIR;
+							my $redir = $$cfg{REDIR_DIR};
 							$line =~ s/href="(.*?)$redir(.*?).html/href="$1$archive$src$2/g;
 						}
 						else
 						{
 							$line =~ s/href="(.*?)$src/href="$1$archive$src/g;
 						}
-						$line =~ s/src="[^"]*$captcha[^"]*"/src=""/g if(ENABLE_CAPTCHA);
+						$line =~ s/src="[^"]*$captcha[^"]*"/src=""/g if($$cfg{ENABLE_CAPTCHA});
 						print RESOUT $line;	
 					}
 					close RESIN;
 					close RESOUT;
 				}
-				unlink RES_DIR.$$row{num}.PAGE_EXT;
+				unlink $$cfg{RES_DIR}.$$row{num}.$$cfg{PAGE_EXT};
 			}
 			else # removing parent image
 			{
@@ -1368,7 +1381,7 @@ sub make_sql_interface($$$)
 	{
 		make_error(S_WRONGPASS) if($nuke ne NUKE_PASS); # check nuke password
 
-		my @statements=grep { /^\S/ } split /\r?\n/,decode_string($sql,CHARSET,1);
+		my @statements=grep { /^\S/ } split /\r?\n/,decode_string($sql,$$cfg{CHARSET},1);
 
 		foreach my $statement (@statements)
 		{
@@ -1420,10 +1433,10 @@ sub do_login($$$$)
 		if($savelogin and $nexttask ne "nuke")
 		{
 			make_cookies(wakaadmin=>$crypt,
-			-charset=>CHARSET,-autopath=>COOKIE_PATH,-expires=>time+365*24*3600);
+			-charset=>$$cfg{CHARSET},-autopath=>$$cfg{COOKIE_PATH},-expires=>time+365*24*3600);
 		}
 
-		make_http_forward(get_script_name()."?task=$nexttask&admin=$crypt",ALTERNATE_REDIRECT);
+		make_http_forward(get_script_name()."?task=$nexttask&admin=$crypt",$$cfg{ALTERNATE_REDIRECT});
 	}
 	else { make_admin_login() }
 }
@@ -1431,7 +1444,7 @@ sub do_login($$$$)
 sub do_logout()
 {
 	make_cookies(wakaadmin=>"",-expires=>1);
-	make_http_forward(get_script_name()."?task=admin",ALTERNATE_REDIRECT);
+	make_http_forward(get_script_name()."?task=admin",$$cfg{ALTERNATE_REDIRECT});
 }
 
 sub do_rebuild_cache($$)
@@ -1440,13 +1453,13 @@ sub do_rebuild_cache($$)
 
 	check_password($admin,ADMIN_PASS);
 
-	unlink glob RES_DIR.'*';
+	unlink glob $$cfg{RES_DIR}.'*';
 
 	repair_database();
 	build_thread_cache_all($section);
 	build_cache($section);
 
-	make_http_forward(HTML_SELF,ALTERNATE_REDIRECT);
+	make_http_forward($$cfg{HTML_SELF},$$cfg{ALTERNATE_REDIRECT});
 }
 
 sub add_admin_entry($$$$$$)
@@ -1456,12 +1469,12 @@ sub add_admin_entry($$$$$$)
 
 	check_password($admin,ADMIN_PASS);
 
-	$comment=clean_string(decode_string($comment,CHARSET));
+	$comment=clean_string(decode_string($comment,$$cfg{CHARSET}));
 
 	$sth=$dbh->prepare("INSERT INTO ".SQL_ADMIN_TABLE." VALUES(null,?,?,?,?,?);") or make_error(S_SQLFAIL);
 	$sth->execute($type,$comment,$ival1,$ival2,$sval1) or make_error(S_SQLFAIL);
 
-	make_http_forward(get_script_name()."?admin=$admin&task=bans",ALTERNATE_REDIRECT);
+	make_http_forward(get_script_name()."?admin=$admin&task=bans",$$cfg{ALTERNATE_REDIRECT});
 }
 
 sub remove_admin_entry($$)
@@ -1474,7 +1487,7 @@ sub remove_admin_entry($$)
 	$sth=$dbh->prepare("DELETE FROM ".SQL_ADMIN_TABLE." WHERE num=?;") or make_error(S_SQLFAIL);
 	$sth->execute($num) or make_error(S_SQLFAIL);
 
-	make_http_forward(get_script_name()."?admin=$admin&task=bans",ALTERNATE_REDIRECT);
+	make_http_forward(get_script_name()."?admin=$admin&task=bans",$$cfg{ALTERNATE_REDIRECT});
 }
 
 sub delete_all($$$$)
@@ -1502,7 +1515,7 @@ sub update_spam_file($$)
 	my @spam_files=SPAM_FILES;
 	write_array($spam_files[0],@spam);
 
-	make_http_forward(get_script_name()."?admin=$admin&task=spam",ALTERNATE_REDIRECT);
+	make_http_forward(get_script_name()."?admin=$admin&task=spam",$$cfg{ALTERNATE_REDIRECT});
 }
 
 sub do_nuke_database($)
@@ -1516,13 +1529,13 @@ sub do_nuke_database($)
 	#init_proxy_database();
 
 	# remove images, thumbnails and threads
-	unlink glob IMG_DIR.'*';
-	unlink glob THUMB_DIR.'*';
-	unlink glob RES_DIR.'*';
+	unlink glob $$cfg{IMG_DIR}.'*';
+	unlink glob $$cfg{THUMB_DIR}.'*';
+	unlink glob $$cfg{RES_DIR}.'*';
 
 	build_cache($boardName);
 
-	make_http_forward(HTML_SELF,ALTERNATE_REDIRECT);
+	make_http_forward($$cfg{HTML_SELF},$$cfg{ALTERNATE_REDIRECT});
 }
 
 sub check_password($$)
@@ -1550,7 +1563,7 @@ sub crypt_password($)
 
 sub make_http_header()
 {
-	print "Content-Type: ".get_xhtml_content_type(CHARSET,USE_XHTML)."\n";
+	print "Content-Type: ".get_xhtml_content_type($$cfg{CHARSET},$$cfg{USE_XHTML})."\n";
 	print "\n";
 }
 
@@ -1578,7 +1591,10 @@ sub make_error($)
 
 	# delete temp files
 
-	next;
+	eval { next; };
+	if ($@) {
+		exit(0);
+	}	
 }
 
 sub get_script_name()
@@ -1588,7 +1604,7 @@ sub get_script_name()
 
 sub get_secure_script_name()
 {
-	return 'https://'.$ENV{SERVER_NAME}.$ENV{SCRIPT_NAME} if(USE_SECURE_ADMIN);
+	return 'https://'.$ENV{SERVER_NAME}.$ENV{SCRIPT_NAME} if($$cfg{USE_SECURE_ADMIN});
 	return $ENV{SCRIPT_NAME};
 }
 
@@ -1599,23 +1615,23 @@ sub expand_image_filename($)
 	return expand_filename(clean_path($filename)) unless ENABLE_LOAD;
 
 	my ($self_path)=$ENV{SCRIPT_NAME}=~m!^(.*/)[^/]+$!;
-	my $src=IMG_DIR;
+	my $src=$$cfg{IMG_DIR};
 	$filename=~/$src(.*)/;
-	return $self_path.REDIR_DIR.clean_path($1).'.html';
+	return $self_path.$$cfg{REDIR_DIR}.clean_path($1).'.html';
 }
 
 sub get_reply_link($$)
 {
 	my ($reply,$parent)=@_;
 
-	return expand_filename(RES_DIR.$parent.PAGE_EXT).'#'.$reply if($parent);
-	return expand_filename(RES_DIR.$reply.PAGE_EXT);
+	return expand_filename($$cfg{RES_DIR}.$parent.$$cfg{PAGE_EXT}).'#'.$reply if($parent);
+	return expand_filename($$cfg{RES_DIR}.$reply.$$cfg{PAGE_EXT});
 }
 
 sub get_page_count(;$)
 {
 	my $total=(shift or count_threads());
-	return int(($total+IMAGES_PER_PAGE-1)/IMAGES_PER_PAGE);
+	return int(($total+$$cfg{IMAGES_PER_PAGE}-1)/$$cfg{IMAGES_PER_PAGE});
 }
 
 sub get_filetypes()
@@ -1748,8 +1764,35 @@ sub init_proxy_database()
 	$sth->execute() or make_error(S_SQLFAIL);
 }
 
+sub init_settings_database() 
+{
+	my ($sth);
+
+	eval { $dbh->do("DROP TABLE ".SQL_SETTINGS_TABLE.";") } or do { }; 
+
+	eval {
+		$dbh->begin_work();
+		$sth=$dbh->prepare("CREATE TABLE ".SQL_SETTINGS_TABLE." (".
+			"section  char(40),".				# Section name (b for /b/, s for /s/)
+			"settings TEXT".				# Settings in json format
+		");");
+		$sth->execute();
+
+		$sth=$dbh->prepare("INSERT INTO ".SQL_SETTINGS_TABLE." VALUES ('', ?);"); 
+		$sth->execute(encode_json($default_settings));
+		$dbh->commit();
+	};
+	if ($@) {
+		print $@;
+		eval { $dbh->rollback(); };
+		make_error(S_SQLFAIL);
+	}
+	
+}
+
 sub repair_database()
 {
+	# TODO Учитывать новые таблички
 	my ($sth,$row,@threads,$thread);
 
 	$sth=$dbh->prepare("SELECT * FROM ".SQL_TABLE." WHERE parent=0;") or make_error(S_SQLFAIL);
@@ -1787,33 +1830,44 @@ sub get_sql_ip()
 	make_error(S_SQLCONF); # maybe there should be a sane default case instead?
 }
 
+sub fetch_config($)
+{
+	my ($boardName) = @_;
+	my ($sth, $row);
+
+	$sth=$dbh->prepare("SELECT * FROM ".SQL_SETTINGS_TABLE." WHERE section=?;") or make_error(S_SQLFAIL);
+	$sth->execute($boardName) or make_error(S_SQLFAIL);
+
+	$row=$sth->fetchrow_hashref();
+	return decode_json($$row{settings});
+}
 
 sub trim_database($)
 {
 	my ($section) = @_;
 	my ($sth,$row,$order);
 
-	if(TRIM_METHOD==0) { $order='num ASC'; }
+	if($$cfg{TRIM_METHOD}==0) { $order='num ASC'; }
 	else { $order='lasthit ASC'; }
 
-	if(MAX_AGE) # needs testing
+	if($$cfg{MAX_AGE}) # needs testing
 	{
-		my $mintime=time()-(MAX_AGE)*3600;
+		my $mintime=time()-($$cfg{MAX_AGE})*3600;
 
 		$sth=$dbh->prepare("SELECT * FROM ".SQL_TABLE." WHERE parent=0 AND timestamp<=$mintime AND section=?;") or make_error(S_SQLFAIL);
 		$sth->execute($section) or make_error(S_SQLFAIL);
 
 		while($row=$sth->fetchrow_hashref())
 		{
-			delete_post($section,$$row{num},"",0,ARCHIVE_MODE);
+			delete_post($section,$$row{num},"",0,$$cfg{ARCHIVE_MODE});
 		}
 	}
 
 	my $threads=count_threads();
 	my ($posts,$size)=count_posts();
-	my $max_threads=(MAX_THREADS or $threads);
-	my $max_posts=(MAX_POSTS or $posts);
-	my $max_size=(MAX_MEGABYTES*1024*1024 or $size);
+	my $max_threads=($$cfg{MAX_THREADS} or $threads);
+	my $max_posts=($$cfg{MAX_POSTS} or $posts);
+	my $max_size=($$cfg{MAX_MEGABYTES}*1024*1024 or $size);
 
 	while($threads>$max_threads or $posts>$max_posts or $size>$max_size)
 	{
@@ -1824,7 +1878,7 @@ sub trim_database($)
 		{
 			my ($threadposts,$threadsize)=count_posts($$row{num});
 
-			delete_post($section,$$row{num},"",0,ARCHIVE_MODE);
+			delete_post($section,$$row{num},"",0,$$cfg{ARCHIVE_MODE});
 
 			$threads--;
 			$posts-=$threadposts;
@@ -1837,7 +1891,7 @@ sub trim_database($)
 sub table_exists($)
 {
 	my ($table)=@_;
-   eval { $dbh->do("SELECT * FROM ".$table." LIMIT 1;") } or do { return 0 };
+   	eval { $dbh->do("SELECT * FROM ".$table." LIMIT 1;") } or do { return 0 };
 	return 1
 }
 

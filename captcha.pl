@@ -20,6 +20,8 @@ return 1 if(caller);
 
 pm_manage(n_processes => SERVER_CONCURRENCY);
 
+our $cfg = {};
+
 my $font_height=8;
 my %font=(
 	a=>[4,[0,2,1,1,2,1,3,2,3,5,4,6],[3,3,1,3,0,4,0,5,1,6,2,6,3,5]],
@@ -52,7 +54,7 @@ my %font=(
 );
 
 my $dbh=DBI->connect(SQL_DBI_SOURCE,SQL_USERNAME,SQL_PASSWORD,{AutoCommit=>1}) or die S_SQLCONF;
-init_captcha_database($dbh) unless(table_exists_captcha($dbh,SQL_CAPTCHA_TABLE));
+init_captcha_database($dbh) unless(table_exists_captcha($dbh,$$cfg{SQL_CAPTCHA_TABLE}));
 
 my ($query, $key, $selector, $style, $ip, $word, $timestamp,
 @foreground, @background);
@@ -64,7 +66,7 @@ while ($query=new CGI::Fast) {
 
 	$key=($query->param("key") or 'default');
 	$selector=($query->param("selector") or ".captcha");
-	$style=($query->cookie("wakabastyle") or DEFAULT_STYLE);
+	$style=($query->cookie("wakabastyle") or $$cfg{DEFAULT_STYLE});
 	@foreground=find_stylesheet_color($style,$selector);
 
 	$ip=($ENV{REMOTE_ADDR} or '0.0.0.0');
@@ -81,7 +83,7 @@ while ($query=new CGI::Fast) {
 
 	print $query->header(
 		-type=>'image/gif',
-	#	-expires=>'+'.($timestamp+(CAPTCHA_LIFETIME)-time()),
+	#	-expires=>'+'.($timestamp+($$cfg{CAPTCHA_LIFETIME})-time()),
 	#	-expires=>'now',
 	);
 
@@ -145,7 +147,7 @@ sub get_captcha_word($$$)
 	my ($dbh,$ip,$key)=@_;
 	my ($sth,$row);
 
-	$sth=$dbh->prepare("SELECT word,timestamp FROM ".SQL_CAPTCHA_TABLE." WHERE ip=? AND pagekey=?;") or return undef;
+	$sth=$dbh->prepare("SELECT word,timestamp FROM ".$$cfg{SQL_CAPTCHA_TABLE}." WHERE ip=? AND pagekey=?;") or return undef;
 	$sth->execute($ip,$key) or return undef; # the captcha script creates the database, so it might not exist yet
 	return @{$row} if($row=$sth->fetchrow_arrayref());
 
@@ -158,7 +160,7 @@ sub save_captcha_word($$$$$)
 
 	delete_captcha_word($dbh,$ip,$key);
 
-	my $sth=$dbh->prepare("INSERT INTO ".SQL_CAPTCHA_TABLE." VALUES(?,?,?,?);") or die S_SQLFAIL;
+	my $sth=$dbh->prepare("INSERT INTO ".$$cfg{SQL_CAPTCHA_TABLE}." VALUES(?,?,?,?);") or die S_SQLFAIL;
 	$sth->execute($ip,$key,$word,$time) or die S_SQLFAIL;
 
 	trim_captcha_database($dbh); # only cleans up on create - good idea or not?
@@ -181,7 +183,7 @@ sub delete_captcha_word($$$)
 {
 	my ($dbh,$ip,$key)=@_;
 
-	my $sth=$dbh->prepare("DELETE FROM ".SQL_CAPTCHA_TABLE." WHERE ip=? AND pagekey=?;") or return;
+	my $sth=$dbh->prepare("DELETE FROM ".$$cfg{SQL_CAPTCHA_TABLE}." WHERE ip=? AND pagekey=?;") or return;
 	$sth->execute($ip,$key) or return;
 }
 
@@ -196,12 +198,12 @@ sub init_captcha_database($)
 	my ($dbh)=@_;
 	my ($sth);
 
-	$sth=$dbh->do("DROP TABLE ".SQL_CAPTCHA_TABLE.";") if(table_exists_captcha($dbh,SQL_CAPTCHA_TABLE));
+	$sth=$dbh->do("DROP TABLE ".$$cfg{SQL_CAPTCHA_TABLE}.";") if(table_exists_captcha($dbh,$$cfg{SQL_CAPTCHA_TABLE}));
 
 	eval {
 		$dbh->begin_work();
 
-		$sth=$dbh->prepare("CREATE TABLE ".SQL_CAPTCHA_TABLE." (".
+		$sth=$dbh->prepare("CREATE TABLE ".$$cfg{SQL_CAPTCHA_TABLE}." (".
 			"ip TEXT,".
 			"pagekey TEXT,".
 			"word TEXT,".
@@ -221,9 +223,9 @@ sub init_captcha_database($)
 sub trim_captcha_database($)
 {
 	my ($dbh)=@_;
-	my $mintime=time()-(CAPTCHA_LIFETIME);
+	my $mintime=time()-($$cfg{CAPTCHA_LIFETIME});
 
-	my $sth=$dbh->prepare("DELETE FROM ".SQL_CAPTCHA_TABLE." WHERE timestamp<=$mintime;") or die S_SQLFAIL;
+	my $sth=$dbh->prepare("DELETE FROM ".$$cfg{SQL_CAPTCHA_TABLE}." WHERE timestamp<=$mintime;") or die S_SQLFAIL;
 	$sth->execute() or die S_SQLFAIL;
 }
 
@@ -255,7 +257,7 @@ sub find_stylesheet_color($$)
 		$title=~s/ ([a-z])/ \u$1/g;
 		$title=~s/([a-z])([A-Z])/$1 $2/g;
 		$title eq $style;
-	} glob(CSS_DIR."*.css");
+	} glob($$cfg{CSS_DIR}."*.css");
 	return (128,0,0) unless($sheet);
 
 	my $contents;
@@ -333,7 +335,7 @@ my ($scale,$rot,$dx,$dy);
 sub draw_string($)
 {
 	my @chars=split //,$_[0];
-	my $x_offs=int(CAPTCHA_HEIGHT/$font_height*2);
+	my $x_offs=int($$cfg{CAPTCHA_HEIGHT}/$font_height*2);
 
 	foreach my $char (@chars)
 	{
@@ -360,7 +362,7 @@ sub draw_string($)
 				$prev_y=$y;
 			}
 		}
-		$x_offs+=int(($char_w+(CAPTCHA_SPACING))*$scale);
+		$x_offs+=int(($char_w+($$cfg{CAPTCHA_SPACING}))*$scale);
 	}
 }
 
@@ -370,8 +372,8 @@ sub setup_transform($)
 
 	$dx=$char_w/2;
 	$dy=$font_height/2;
-	$scale=CAPTCHA_HEIGHT/$font_height*(1+(CAPTCHA_SCALING)*(1-rand(2)));
-	$rot=(rand(2)-1)*(CAPTCHA_ROTATION);
+	$scale=$$cfg{CAPTCHA_HEIGHT}/$font_height*(1+($$cfg{CAPTCHA_SCALING})*(1-rand(2)));
+	$rot=(rand(2)-1)*($$cfg{CAPTCHA_ROTATION});
 }
 
 sub transform_coords($$)
@@ -379,8 +381,8 @@ sub transform_coords($$)
 	my ($x,$y)=@_;
 
 	return (
-		int($scale*(cos($rot)*($x-$dx)-sin($rot)*($y-$dy)+$dx+rand(CAPTCHA_SCRIBBLE))),
-		int($scale*(sin($rot)*($x-$dx)+cos($rot)*($y-$dy)+$dy+rand(CAPTCHA_SCRIBBLE)))
+		int($scale*(cos($rot)*($x-$dx)-sin($rot)*($y-$dy)+$dx+rand($$cfg{CAPTCHA_SCRIBBLE}))),
+		int($scale*(sin($rot)*($x-$dx)+cos($rot)*($y-$dy)+$dy+rand($$cfg{CAPTCHA_SCRIBBLE})))
 	);
 }
 

@@ -2,16 +2,14 @@ use strict;
 
 BEGIN { require "wakautils.pl" }
 
-
-
 use constant NORMAL_HEAD_INCLUDE => q{
 
 <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
 <html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en">
 <head>
-<title><if $title><var $title> - </if><const TITLE></title>
-<meta http-equiv="Content-Type" content="text/html;charset=<const CHARSET>" />
-<link rel="shortcut icon" href="<var expand_filename(FAVICON)>" />
+<title><if $title><var $title> - </if><const $$cfg{TITLE}></title>
+<meta http-equiv="Content-Type" content="text/html;charset=<const $$cfg{CHARSET}>" />
+<link rel="shortcut icon" href="<var expand_filename($$cfg{FAVICON})>" />
 
 <style type="text/css">
 body { margin: 0; padding: 8px; margin-bottom: auto; }
@@ -33,8 +31,8 @@ form .trap { display:none }
 <link rel="<if !$default>alternate </if>stylesheet" type="text/css" href="<var $path><var $filename>" title="<var $title>" />
 </loop>
 
-<script type="text/javascript">var style_cookie="<const STYLE_COOKIE>";</script>
-<script type="text/javascript" src="<var expand_filename(JS_FILE)>"></script>
+<script type="text/javascript">var style_cookie="<const $$cfg{STYLE_COOKIE}>";</script>
+<script type="text/javascript" src="<var expand_filename($$cfg{JS_FILE})>"></script>
 </head>
 <if $thread><body class="replypage"></if>
 <if !$thread><body></if>
@@ -46,15 +44,15 @@ form .trap { display:none }
 	[<a href="javascript:set_stylesheet('<var $title>')"><var $title></a>]
 </loop>
 -
-[<a href="<var expand_filename(HOME)>" target="_top"><const S_HOME></a>]
+[<a href="<var expand_filename($$cfg{HOME})>" target="_top"><const S_HOME></a>]
 [<a href="<var get_secure_script_name()>?task=admin"><const S_ADMIN></a>]
 </div>
 
 <div class="logo">
-<if SHOWTITLEIMG==1><img src="<var expand_filename(TITLEIMG)>" alt="<const TITLE>" /></if>
-<if SHOWTITLEIMG==2><img src="<var expand_filename(TITLEIMG)>" onclick="this.src=this.src;" alt="<const TITLE>" /></if>
-<if SHOWTITLEIMG and SHOWTITLETXT><br /></if>
-<if SHOWTITLETXT><const TITLE></if>
+<if $$cfg{SHOWTITLEIMG}==1><img src="<var expand_filename($$cfg{TITLEIMG})>" alt="<const $$cfg{TITLE}>" /></if>
+<if $$cfg{SHOWTITLEIMG}==2><img src="<var expand_filename($$cfg{TITLEIMG})>" onclick="this.src=this.src;" alt="<const $$cfg{TITLE}>" /></if>
+<if $$cfg{SHOWTITLEIMG} and $$cfg{SHOWTITLETXT}><br /></if>
+<if $$cfg{SHOWTITLETXT}><const $$cfg{TITLE}></if>
 </div><hr />
 };
 
@@ -66,7 +64,7 @@ use constant NORMAL_FOOT_INCLUDE => include("include/footer.html").q{
 use constant PAGE_TEMPLATE => compile_template(NORMAL_HEAD_INCLUDE.q{
 
 <if $thread>
-	[<a href="<var expand_filename(HTML_SELF)>"><const S_RETURN></a>]
+	[<a href="<var expand_filename($$cfg{HTML_SELF})>"><const S_RETURN></a>]
 	<div class="theader"><const S_POSTING></div>
 </if>
 
@@ -76,14 +74,14 @@ use constant PAGE_TEMPLATE => compile_template(NORMAL_HEAD_INCLUDE.q{
 
 	<input type="hidden" name="task" value="post" />
 	<if $thread><input type="hidden" name="parent" value="<var $thread>" /></if>
-	<if !$image_inp and !$thread and ALLOW_TEXTONLY>
+	<if !$image_inp and !$thread and $$cfg{ALLOW_TEXTONLY}>
 		<input type="hidden" name="nofile" value="1" />
 	</if>
-	<if FORCED_ANON><input type="hidden" name="name" /></if>
-	<if SPAM_TRAP><div class="trap"><const S_SPAMTRAP><input type="text" name="name" size="28" autocomplete="off" /><input type="text" name="link" size="28" autocomplete="off" /></div></if>
+	<if $$cfg{FORCED_ANON}><input type="hidden" name="name" /></if>
+	<if $$cfg{SPAM_TRAP}><div class="trap"><const S_SPAMTRAP><input type="text" name="name" size="28" autocomplete="off" /><input type="text" name="link" size="28" autocomplete="off" /></div></if>
 
 	<table><tbody>
-	<if !FORCED_ANON><tr><td class="postblock"><const S_NAME></td><td><input type="text" name="field1" size="28" /></td></tr></if>
+	<if !$$cfg{FORCED_ANON}><tr><td class="postblock"><const S_NAME></td><td><input type="text" name="field1" size="28" /></td></tr></if>
 	<tr><td class="postblock"><const S_EMAIL></td><td><input type="text" name="field2" size="28" /></td></tr>
 	<tr><td class="postblock"><const S_SUBJECT></td><td><input type="text" name="field3" size="35" />
 	<input type="submit" value="<const S_SUBMIT>" /></td></tr>
@@ -95,9 +93,9 @@ use constant PAGE_TEMPLATE => compile_template(NORMAL_HEAD_INCLUDE.q{
 		</td></tr>
 	</if>
 
-	<if ENABLE_CAPTCHA>
+	<if $$cfg{ENABLE_CAPTCHA}>
 		<tr><td class="postblock"><const S_CAPTCHA></td><td><input type="text" name="captcha" size="10" />
-		<img alt="" src="<var expand_filename(CAPTCHA_SCRIPT)>?key=<var get_captcha_key($thread)>&amp;dummy=<var $dummy>" />
+		<img alt="" src="<var expand_filename($$cfg{CAPTCHA_SCRIPT})>?key=<var get_captcha_key($thread)>&amp;dummy=<var $dummy>" />
 		</td></tr>
 	</if>
 
@@ -125,11 +123,11 @@ use constant PAGE_TEMPLATE => compile_template(NORMAL_HEAD_INCLUDE.q{
 					<img src="<var expand_filename($thumbnail)>" width="<var $tn_width>" height="<var $tn_height>" alt="<var $size>" class="thumb" /></a>
 				</if>
 				<if !$thumbnail>
-					<if DELETED_THUMBNAIL>
-						<a target="_blank" href="<var expand_image_filename(DELETED_IMAGE)>">
-						<img src="<var expand_filename(DELETED_THUMBNAIL)>" width="<var $tn_width>" height="<var $tn_height>" alt="" class="thumb" /></a>
+					<if $$cfg{DELETED_THUMBNAIL}>
+						<a target="_blank" href="<var expand_image_filename($$cfg{DELETED_IMAGE})>">
+						<img src="<var expand_filename($$cfg{DELETED_THUMBNAIL})>" width="<var $tn_width>" height="<var $tn_height>" alt="" class="thumb" /></a>
 					</if>
-					<if !DELETED_THUMBNAIL>
+					<if !$$cfg{DELETED_THUMBNAIL}>
 						<div class="nothumb"><a target="_blank" href="<var expand_image_filename($image)>"><const S_NOTHUMB></a></div>
 					</if>
 				</if>
@@ -185,11 +183,11 @@ use constant PAGE_TEMPLATE => compile_template(NORMAL_HEAD_INCLUDE.q{
 					<img src="<var expand_filename($thumbnail)>" width="<var $tn_width>" height="<var $tn_height>" alt="<var $size>" class="thumb" /></a>
 				</if>
 				<if !$thumbnail>
-					<if DELETED_THUMBNAIL>
-						<a target="_blank" href="<var expand_image_filename(DELETED_IMAGE)>">
-						<img src="<var expand_filename(DELETED_THUMBNAIL)>" width="<var $tn_width>" height="<var $tn_height>" alt="" class="thumb" /></a>
+					<if $$cfg{DELETED_THUMBNAIL}>
+						<a target="_blank" href="<var expand_image_filename($$cfg{DELETED_IMAGE})>">
+						<img src="<var expand_filename($$cfg{DELETED_THUMBNAIL})>" width="<var $tn_width>" height="<var $tn_height>" alt="" class="thumb" /></a>
 					</if>
-					<if !DELETED_THUMBNAIL>
+					<if !$$cfg{DELETED_THUMBNAIL}>
 						<div class="nothumb"><a target="_blank" href="<var expand_image_filename($image)>"><const S_NOTHUMB></a></div>
 					</if>
 				</if>
@@ -255,7 +253,7 @@ use constant ERROR_TEMPLATE => compile_template(NORMAL_HEAD_INCLUDE.q{
 
 use constant MANAGER_HEAD_INCLUDE => NORMAL_HEAD_INCLUDE.q{
 
-[<a href="<var expand_filename(HTML_SELF)>"><const S_MANARET></a>]
+[<a href="<var expand_filename($$cfg{HTML_SELF})>"><const S_MANARET></a>]
 <if $admin>
 	[<a href="<var $self>?task=mpanel&amp;admin=<var $admin>"><const S_MANAPANEL></a>]
 	[<a href="<var $self>?task=bans&amp;admin=<var $admin>"><const S_MANABANS></a>]
@@ -617,15 +615,11 @@ use constant ADMIN_POST_TEMPLATE => compile_template(MANAGER_HEAD_INCLUDE.q{
 }.NORMAL_FOOT_INCLUDE);
 
 
-
-no strict;
-$stylesheets=get_stylesheets(); # make stylesheets visible to the templates
-use strict;
-
 sub get_filename($) { my $path=shift; $path=~m!([^/]+)$!; clean_string($1) }
 
-sub get_stylesheets()
+sub get_stylesheets($$)
 {
+	my ($default_style, $css_dir) = @_;
 	my $found=0;
 	my @stylesheets=map
 	{
@@ -639,11 +633,11 @@ sub get_stylesheets()
 		$sheet{title}=~s/ ([a-z])/ \u$1/g;
 		$sheet{title}=~s/([a-z])([A-Z])/$1 $2/g;
 
-		if($sheet{title} eq DEFAULT_STYLE) { $sheet{default}=1; $found=1; }
+		if($sheet{title} eq $default_style) { $sheet{default}=1; $found=1; }
 		else { $sheet{default}=0; }
 
 		\%sheet;
-	} glob(CSS_DIR."*.css");
+	} glob($css_dir."*.css");
 
 	$stylesheets[0]{default}=1 if(@stylesheets and !$found);
 
