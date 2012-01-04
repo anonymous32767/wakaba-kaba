@@ -7,8 +7,8 @@ use constant NORMAL_HEAD_INCLUDE => q{
 <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
 <html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en">
 <head>
-<title><if $title><var $title> - </if><const $$cfg{TITLE}></title>
-<meta http-equiv="Content-Type" content="text/html;charset=<const $$cfg{CHARSET}>" />
+<title><if $title><var $title> - </if><var $$cfg{TITLE}></title>
+<meta http-equiv="Content-Type" content="text/html;charset=<var $$cfg{CHARSET}>" />
 <link rel="shortcut icon" href="<var expand_filename($$cfg{FAVICON})>" />
 
 <style type="text/css">
@@ -31,7 +31,7 @@ form .trap { display:none }
 <link rel="<if !$default>alternate </if>stylesheet" type="text/css" href="<var $path><var $filename>" title="<var $title>" />
 </loop>
 
-<script type="text/javascript">var style_cookie="<const $$cfg{STYLE_COOKIE}>";</script>
+<script type="text/javascript">var style_cookie="<var $$cfg{STYLE_COOKIE}>";</script>
 <script type="text/javascript" src="<var expand_filename($$cfg{JS_FILE})>"></script>
 </head>
 <if $thread><body class="replypage"></if>
@@ -49,10 +49,10 @@ form .trap { display:none }
 </div>
 
 <div class="logo">
-<if $$cfg{SHOWTITLEIMG}==1><img src="<var expand_filename($$cfg{TITLEIMG})>" alt="<const $$cfg{TITLE}>" /></if>
-<if $$cfg{SHOWTITLEIMG}==2><img src="<var expand_filename($$cfg{TITLEIMG})>" onclick="this.src=this.src;" alt="<const $$cfg{TITLE}>" /></if>
+<if $$cfg{SHOWTITLEIMG}==1><img src="<var expand_filename($$cfg{TITLEIMG})>" alt="<var $$cfg{TITLE}>" /></if>
+<if $$cfg{SHOWTITLEIMG}==2><img src="<var expand_filename($$cfg{TITLEIMG})>" onclick="this.src=this.src;" alt="<var $$cfg{TITLE}>" /></if>
 <if $$cfg{SHOWTITLEIMG} and $$cfg{SHOWTITLETXT}><br /></if>
-<if $$cfg{SHOWTITLETXT}><const $$cfg{TITLE}></if>
+<if $$cfg{SHOWTITLETXT}><var $$cfg{TITLE}></if>
 </div><hr />
 };
 

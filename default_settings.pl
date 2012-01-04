@@ -31,7 +31,6 @@ our $default_settings = {
 	MAX_IMAGE_PIXELS => 50000000,
 
 	ENABLE_CAPTCHA => 1,
-	SQL_CAPTCHA_TABLE => 'captcha',
 	CAPTCHA_LIFETIME => 1440,
 	CAPTCHA_SCRIPT => 'captcha.pl',
 	CAPTCHA_HEIGHT => 18,

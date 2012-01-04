@@ -19,10 +19,14 @@ BEGIN {
 	eval "use constant SQL_SETTINGS_TABLE => 'settings'" unless(defined &SQL_SETTINGS_TABLE);
 	eval "use constant SQL_ADMIN_TABLE => 'admin'" unless(defined &SQL_ADMIN_TABLE);
 	eval "use constant SQL_PROXY_TABLE => 'proxy'" unless(defined &SQL_PROXY_TABLE);
+	eval "use constant SQL_CAPTCHA_TABLE => 'captcha'" unless(defined &SQL_CAPTCHA_TABLE);
 
-	eval "use constant ENABLE_BORAD_AUTOCREATE => 0" unless(defined &ENABLE_BOARD_AUTOCREATE);
+	eval "use constant ENABLE_BROAD_AUTOCREATE => 0" unless(defined &ENABLE_BOARD_AUTOCREATE);
+	eval "use constant BROAD_AUTOCREATE_PREFIX => '_'" unless(defined &BOARD_AUTOCREATE_PREFIX);
 
 	eval "use constant USE_TEMPFILES => 1" unless(defined &USE_TEMPFILES);
+
+	eval "use constant FILESYSTEM_ROOT => './'" unless(defined &FILESYSTEM_ROOT);
 
 	eval "use constant ENABLE_LOAD => 0" unless(defined &ENABLE_LOAD);
 	eval "use constant LOAD_SENDER_SCRIPT => 'sender.pl'" unless(defined &LOAD_SENDER_SCRIPT);
@@ -41,7 +45,7 @@ BEGIN {
 		if(defined &SPAM_FILE) { eval "use constant SPAM_FILES => (SPAM_FILE)" }
 		else { eval "use constant SPAM_FILES => ('spam.txt')" }
 	}
-#	eval "use constant SPAM_FILE => 'spam.txt'" unless(defined &SPAM_FILE);
+	eval "use constant SPAM_FILE => 'spam.txt'" unless(defined &SPAM_FILE);
 
 	eval "use constant FILETYPES => ()" unless(defined &FILETYPES);
 

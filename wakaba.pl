@@ -4,6 +4,7 @@ use CGI::Carp qw(fatalsToBrowser);
 
 # use strict;
 
+use CGI qw/:standard/;           # load standard CGI routines
 use CGI::Fast;
 use FCGI::ProcManager qw(pm_manage pm_pre_dispatch 
                          pm_post_dispatch);
@@ -18,7 +19,7 @@ use lib '.';
 BEGIN { require "config.pl"; }
 BEGIN { require "config_defaults.pl"; }
 BEGIN { require "default_settings.pl"; }
-BEGIN { require "strings_en.pl"; }		# edit this line to change the language
+BEGIN { require "strings_en.pl"; }	# edit this line to change the language
 BEGIN { require "futaba_style.pl"; }	# edit this line to change the board style
 BEGIN { require "captcha.pl"; }
 BEGIN { require "wakautils.pl"; }
@@ -43,7 +44,7 @@ if($$cfg{CONVERT_CHARSETS})
 # Global init
 #
 
-my $boardName = ''; 
+my $boardSection = ''; 
 our $cfg = {};
 
 my $protocol_re=qr/(?:http|https|ftp|mailto|nntp)/;
@@ -66,7 +67,7 @@ if(!table_exists(SQL_SETTINGS_TABLE)) # check for settings table
 if(!table_exists(SQL_TABLE)) # check for comments table
 {
 	init_database();
-	build_cache($boardName);
+	build_cache($boardSection);
 	make_http_forward($$cfg{HTML_SELF},$$cfg{ALTERNATE_REDIRECT});
 }
 
@@ -75,12 +76,26 @@ while (my $query=new CGI::Fast) {
 
 	my $task=($query->param("task") or $query->param("action"));
 
-	$boardName = ($query->param("section") or '');
-	$cfg = fetch_config($boardName);
+	$boardSection = ($query->param("section") or 'default');
+	eval { $cfg = fetch_config($dbh,$boardSection); };
+	if ($@) 
+	{
+		if (ENABLE_BOARD_AUTOCREATE 
+			and $boardSection =~ /^${\(BOARD_AUTOCREATE_PREFIX)}/)
+		{
+			init_section($sectionName);
+			$cfg = fetch_config($dbh,$sectionName);	
+		} 
+		else
+		{
+			make_http_error('404 Section not found', '');
+		}
+		
+	}
 
   	if(!$task)
 	{
-		build_cache($boardName) unless -e $$cfg{HTML_SELF};
+		build_cache($boardSection) unless -e $$cfg{HTML_SELF};
 		make_http_forward($$cfg{HTML_SELF},$$cfg{ALTERNATE_REDIRECT});
 	}
 	elsif($task eq "post")
@@ -99,7 +114,7 @@ while (my $query=new CGI::Fast) {
 		my $no_format=$query->param("no_format");
 		my $postfix=$query->param("postfix");
 
-		post_stuff($boardName,$parent,$name,$email,$subject,$comment,$file,$file,$password,$nofile,$captcha,$admin,$no_captcha,$no_format,$postfix);
+		post_stuff($boardSection,$parent,$name,$email,$subject,$comment,$file,$file,$password,$nofile,$captcha,$admin,$no_captcha,$no_format,$postfix);
 	}
 	elsif($task eq "delete")
 	{
@@ -109,7 +124,7 @@ while (my $query=new CGI::Fast) {
 		my $admin=$query->param("admin");
 		my @posts=$query->param("delete");
 
-		delete_stuff($boardName,$password,$fileonly,$archive,$admin,@posts);
+		delete_stuff($boardSection,$password,$fileonly,$archive,$admin,@posts);
 	}
 	elsif($task eq "admin")
 	{
@@ -134,7 +149,7 @@ while (my $query=new CGI::Fast) {
 		my $admin=$query->param("admin");
 		my $ip=$query->param("ip");
 		my $mask=$query->param("mask");
-		delete_all($boardName,$admin,parse_range($ip,$mask));
+		delete_all($boardSection,$admin,parse_range($ip,$mask));
 	}
 	elsif($task eq "bans")
 	{
@@ -216,12 +231,17 @@ while (my $query=new CGI::Fast) {
 	elsif($task eq "rebuild")
 	{
 		my $admin=$query->param("admin");
-		do_rebuild_cache($boardName,$admin);
+		do_rebuild_cache($boardSection,$admin);
 	}
 	elsif($task eq "nuke")
 	{
 		my $admin=$query->param("admin");
 		do_nuke_database($admin);
+	}
+	elsif($task eq "sectioncfg")
+	{
+		my $admin=$query->param("admin");
+		make_admin_section_panel($admin);
 	}
 
 	pm_post_dispatch();
@@ -516,7 +536,7 @@ sub post_stuff($$$$$$$$$$$$$$$)
 	) unless $whitelisted;
 
 	# check captcha
-	check_captcha($dbh,$captcha,$ip,$parent) if($$cfg{ENABLE_CAPTCHA} and !$no_captcha and !is_trusted($trip));
+	check_captcha($dbh,$boardSection,$captcha,$ip,$parent) if($$cfg{ENABLE_CAPTCHA} and !$no_captcha and !is_trusted($trip));
 
 	# proxy check
 	proxy_check($ip) if (!$whitelisted and ENABLE_PROXY_CHECK);
@@ -1261,7 +1281,10 @@ sub delete_post($$$$$)
 sub make_admin_login()
 {
 	make_http_header();
-	print encode_string(ADMIN_LOGIN_TEMPLATE->());
+	print encode_string(ADMIN_LOGIN_TEMPLATE->(
+		cfg=>$cfg,
+		stylesheets=>get_stylesheets($$cfg{DEFAULT_STYLE}, $$cfg{CSS_DIR}),
+	));
 }
 
 sub make_admin_post_panel($)
@@ -1288,7 +1311,12 @@ sub make_admin_post_panel($)
 	}
 
 	make_http_header();
-	print encode_string(POST_PANEL_TEMPLATE->(admin=>$admin,posts=>\@posts,size=>$size));
+	print encode_string(POST_PANEL_TEMPLATE->(
+		cfg=>$cfg,
+		stylesheets=>get_stylesheets($$cfg{DEFAULT_STYLE}, $$cfg{CSS_DIR}),
+		admin=>$admin,
+		posts=>\@posts,
+		size=>$size));
 }
 
 sub make_admin_ban_panel($)
@@ -1309,7 +1337,12 @@ sub make_admin_ban_panel($)
 	}
 
 	make_http_header();
-	print encode_string(BAN_PANEL_TEMPLATE->(admin=>$admin,bans=>\@bans));
+	print encode_string(BAN_PANEL_TEMPLATE->(
+		cfg=>$cfg,
+		stylesheets=>get_stylesheets($$cfg{DEFAULT_STYLE}, $$cfg{CSS_DIR}),
+		admin=>$admin,
+		bans=>\@bans
+	));
 }
 
 sub make_admin_proxy_panel($)
@@ -1332,7 +1365,11 @@ sub make_admin_proxy_panel($)
 	}
 
 	make_http_header();
-	print encode_string(PROXY_PANEL_TEMPLATE->(admin=>$admin,scanned=>\@scanned));
+	print encode_string(PROXY_PANEL_TEMPLATE->(
+		cfg=>$cfg,
+		stylesheets=>get_stylesheets($$cfg{DEFAULT_STYLE}, $$cfg{CSS_DIR}),
+		admin=>$admin,
+		scanned=>\@scanned));
 }
 
 sub make_admin_spam_panel($)
@@ -1344,9 +1381,13 @@ sub make_admin_spam_panel($)
 	check_password($admin,ADMIN_PASS);
 
 	make_http_header();
-	print encode_string(SPAM_PANEL_TEMPLATE->(admin=>$admin,
-	spamlines=>scalar @spam,
-	spam=>join "\n",map { clean_string($_,1) } @spam));
+	print encode_string(SPAM_PANEL_TEMPLATE->(
+		cfg=>$cfg,
+		stylesheets=>get_stylesheets($$cfg{DEFAULT_STYLE}, $$cfg{CSS_DIR}),
+		admin=>$admin,
+		spamlines=>scalar @spam,
+		spam=>join "\n",map { clean_string($_,1) } @spam
+	));
 }
 
 sub make_sql_dump($)
@@ -1366,8 +1407,11 @@ sub make_sql_dump($)
 	}
 
 	make_http_header();
-	print encode_string(SQL_DUMP_TEMPLATE->(admin=>$admin,
-	database=>join "<br />",map { clean_string($_,1) } @database));
+	print encode_string(SQL_DUMP_TEMPLATE->(
+		cfg=>$cfg,
+		stylesheets=>get_stylesheets($$cfg{DEFAULT_STYLE}, $$cfg{CSS_DIR}),
+		admin=>$admin,
+		database=>join "<br />",map { clean_string($_,1) } @database));
 }
 
 sub make_sql_interface($$$)
@@ -1399,8 +1443,11 @@ sub make_sql_interface($$$)
 	}
 
 	make_http_header();
-	print encode_string(SQL_INTERFACE_TEMPLATE->(admin=>$admin,nuke=>$nuke,
-	results=>join "<br />",map { clean_string($_,1) } @results));
+	print encode_string(SQL_INTERFACE_TEMPLATE->(
+		cfg=>$cfg,
+		stylesheets=>get_stylesheets($$cfg{DEFAULT_STYLE}, $$cfg{CSS_DIR}),
+		admin=>$admin,nuke=>$nuke,
+		results=>join "<br />",map { clean_string($_,1) } @results));
 }
 
 sub make_admin_post($)
@@ -1410,7 +1457,26 @@ sub make_admin_post($)
 	check_password($admin,ADMIN_PASS);
 
 	make_http_header();
-	print encode_string(ADMIN_POST_TEMPLATE->(admin=>$admin));
+	print encode_string(ADMIN_POST_TEMPLATE->(
+		cfg=>$cfg,
+		stylesheets=>get_stylesheets($$cfg{DEFAULT_STYLE}, $$cfg{CSS_DIR}),
+		admin=>$admin));
+}
+
+sub make_admin_section_panel($$)
+{
+	my ($admin,$sectionName) = @_;
+
+	check_password($admin,ADMIN_PASS);
+
+	eval { $sectionConfig = fetch_config($dbh,$sectionName); } or make_error(S_INVSECTION);
+
+	make_http_header();
+	print encode_string(ADMIN_SECTION_TEMPLATE->(
+		cfg=>$cfg,
+		stylesheets=>get_stylesheets($$cfg{DEFAULT_STYLE}, $$cfg{CSS_DIR}),
+		admin=>$admin,
+		sectionConfig=>$sectionConfig));
 }
 
 sub do_login($$$$)
@@ -1533,7 +1599,7 @@ sub do_nuke_database($)
 	unlink glob $$cfg{THUMB_DIR}.'*';
 	unlink glob $$cfg{RES_DIR}.'*';
 
-	build_cache($boardName);
+	build_cache($boardSection);
 
 	make_http_forward($$cfg{HTML_SELF},$$cfg{ALTERNATE_REDIRECT});
 }
@@ -1561,6 +1627,24 @@ sub crypt_password($)
 # Page creation utils
 #
 
+sub make_http_error($$)
+{
+	my ($status,$error) = @_;
+	print header(
+		-typt=>'text/html',
+		-status=>$status);
+
+	print encode_string(ERROR_TEMPLATE->(
+		cfg=>$cfg,
+		stylesheets=>get_stylesheets($$cfg{DEFAULT_STYLE}, $$cfg{CSS_DIR}),
+		error=>($error or $status)));
+
+	eval { next; };
+	if ($@) {
+		exit(0);
+	}	
+}
+
 sub make_http_header()
 {
 	print "Content-Type: ".get_xhtml_content_type($$cfg{CHARSET},$$cfg{USE_XHTML})."\n";
@@ -1573,7 +1657,10 @@ sub make_error($)
 
 	make_http_header();
 
-	print encode_string(ERROR_TEMPLATE->(error=>$error));
+	print encode_string(ERROR_TEMPLATE->(
+		cfg=>$cfg,
+		stylesheets=>get_stylesheets($$cfg{DEFAULT_STYLE}, $$cfg{CSS_DIR}),
+		error=>$error));
 
 	if($dbh)
 	{
@@ -1717,7 +1804,7 @@ sub init_database()
 		$sth->execute();
 
 		$sth=$dbh->prepare("INSERT INTO ".SQL_COUNTERS_TABLE." VALUES (?,?);");
-		$sth->execute($boardName,0);
+		$sth->execute($boardSection,0);
 
 		$dbh->commit();
 	};
@@ -1780,6 +1867,9 @@ sub init_settings_database()
 
 		$sth=$dbh->prepare("INSERT INTO ".SQL_SETTINGS_TABLE." VALUES ('', ?);"); 
 		$sth->execute(encode_json($default_settings));
+
+		$sth=$dbh->prepare("INSERT INTO ".SQL_SETTINGS_TABLE." VALUES ('default', ?);"); 
+		$sth->execute(encode_json($default_settings));
 		$dbh->commit();
 	};
 	if ($@) {
@@ -1830,16 +1920,33 @@ sub get_sql_ip()
 	make_error(S_SQLCONF); # maybe there should be a sane default case instead?
 }
 
-sub fetch_config($)
+sub fetch_config($$)
 {
-	my ($boardName) = @_;
-	my ($sth, $row);
+	my ($dbh,$boardSection) = @_;
+	my ($sth,$row);
 
 	$sth=$dbh->prepare("SELECT * FROM ".SQL_SETTINGS_TABLE." WHERE section=?;") or make_error(S_SQLFAIL);
-	$sth->execute($boardName) or make_error(S_SQLFAIL);
+	$sth->execute($boardSection) or make_error(S_SQLFAIL);
 
 	$row=$sth->fetchrow_hashref();
 	return decode_json($$row{settings});
+}
+
+sub store_config($$)
+{
+	my ($sectionName,$configToStore);
+	eval {
+		$dbh->begin_work();
+		$sth=$dbh->prepare("INSERT INTO ".SQL_SETTINGS_TABLE." VALUES (?, ?);"); 
+		$sth->execute($sectionName, encode_json($configToStore));
+		$dbh->commit();
+	};
+	if ($@) {
+		print $@;
+		eval { $dbh->rollback(); };
+		make_error(S_SQLFAIL);
+	}
+
 }
 
 sub trim_database($)
@@ -1962,4 +2069,35 @@ sub get_decoded_arrayref($)
 	}
 
 	return $row;
+}
+
+#
+# Section dealing utils
+#
+sub init_section($)
+{
+	my ($sectionName) = @_;
+	my ($prefix);
+
+	make_error(S_INVSECTION) if ($sectionName !~ /\w+/);
+
+	# Creating directory structure for new board section	
+	mkdir(FILESYSTEM_ROOT.$sectionName, 		0755);
+	mkdir(FILESYSTEM_ROOT.$sectionName."/res/", 	0755);
+	mkdir(FILESYSTEM_ROOT.$sectionName."/src/", 	0755);
+	mkdir(FILESYSTEM_ROOT.$sectionName."/thumb/", 	0755);
+
+	$configTemplate = fetch_config($dbh,'');
+	$prefix = "/$sectionName/";
+
+	# Adjusting config values
+	$configTemplate{IMG_DIR} 	= $prefix.$configTemplate{IMG_DIR};
+	$configTemplate{THUMB_DIR} 	= $prefix.$configTemplate{THUMB_DIR};
+	$configTemplate{RES_DIR} 	= $prefix.$configTemplate{RES_DIR};
+	$configTemplate{ARCH_DIR} 	= $prefix.$configTemplate{ARCH_DIR};
+	$configTemplate{REDIR_DIR} 	= $prefix.$configTemplate{REDIR_DIR};
+	$configTemplate{SCRIPT_NAME} 	= $prefix.$configTemplate{SCRIPT_NAME};
+	$configTemplate{CAPTCHA_SCRIPT} = $prefix.$configTemplate{CAPTCHA_SCRIPT};
+	
+	store_config($sectionName,$configTemplate);
 }
