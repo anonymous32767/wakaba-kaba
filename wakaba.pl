@@ -243,6 +243,10 @@ while (my $query=new CGI::Fast) {
 		my $admin=$query->param("admin");
 		make_admin_section_panel($admin);
 	}
+	else
+	{
+		make_error(S_TASK404);
+	}
 
 	pm_post_dispatch();
 }
