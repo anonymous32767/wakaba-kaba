@@ -243,6 +243,11 @@ while (my $query=new CGI::Fast) {
 		my $admin=$query->param("admin");
 		make_admin_section_panel($admin);
 	}
+	elsif($task eq "updatesectioncfg")
+	{
+		my $admin=$query->param("admin");
+		# TODO 
+	}
 	else
 	{
 		make_error(S_TASK404);
@@ -1480,7 +1485,7 @@ sub make_admin_section_panel($$)
 		cfg=>$cfg,
 		stylesheets=>get_stylesheets($$cfg{DEFAULT_STYLE}, $$cfg{CSS_DIR}),
 		admin=>$admin,
-		sectionConfig=>$sectionConfig));
+		sectionConfig=>JSON->new->pretty->encode($sectionConfig)));
 }
 
 sub do_login($$$$)

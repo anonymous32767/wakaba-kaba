@@ -255,6 +255,7 @@ use constant MANAGER_HEAD_INCLUDE => NORMAL_HEAD_INCLUDE.q{
 
 [<a href="<var expand_filename($$cfg{HTML_SELF})>"><const S_MANARET></a>]
 <if $admin>
+	[<a href="<var $self>?task=sectioncfg&amp;admin=<var $admin>"><const S_MANASECTION></a>]
 	[<a href="<var $self>?task=mpanel&amp;admin=<var $admin>"><const S_MANAPANEL></a>]
 	[<a href="<var $self>?task=bans&amp;admin=<var $admin>"><const S_MANABANS></a>]
 	[<a href="<var $self>?task=proxy&amp;admin=<var $admin>"><const S_MANAPROXY></a>]
@@ -614,6 +615,12 @@ use constant ADMIN_POST_TEMPLATE => compile_template(MANAGER_HEAD_INCLUDE.q{
 
 }.NORMAL_FOOT_INCLUDE);
 
+
+use constant ADMIN_SECTION_TEMPLATE => compile_template(MANAGER_HEAD_INCLUDE.q{
+
+<pre><textarea><var $sectionConfig></textarea></pre>
+
+}.NORMAL_FOOT_INCLUDE);
 
 sub get_filename($) { my $path=shift; $path=~m!([^/]+)$!; clean_string($1) }
 
