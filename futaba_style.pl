@@ -617,8 +617,19 @@ use constant ADMIN_POST_TEMPLATE => compile_template(MANAGER_HEAD_INCLUDE.q{
 
 
 use constant ADMIN_SECTION_TEMPLATE => compile_template(MANAGER_HEAD_INCLUDE.q{
+<div class="dellist"><const S_MANASECTION></div>
 
-<pre><textarea><var $sectionConfig></textarea></pre>
+<div class="postarea">
+<form id="postform" action="<var $self>" method="post">
+<input type="hidden" name="task" value="updatesectioncfg" />
+<input type="hidden" name="admin" value="<var $admin>" />
+<table style="width:80%;height:80%"><tbody>
+<tr>
+<td class="postblock"><const S_CFG></td>
+<td><pre><textarea name="sectionConfig" style="width:100%;min-height:400px;"><var $sectionConfig></textarea></pre> <input type="submit" value="<const S_SUBMIT>" /> </td></tr>
+</tbody></table>
+</form>
+</div>
 
 }.NORMAL_FOOT_INCLUDE);
 

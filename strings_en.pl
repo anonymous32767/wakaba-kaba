@@ -58,6 +58,8 @@ use constant S_MANASAVE => 'Remember me on this computer';				# Defines Label fo
 use constant S_MANASUB => 'Go';											# Defines name for submit button in Manager Mode
 use constant S_MANASECTION => 'Section Configuration';					# Defines name for submit button in Manager Mode
 
+use constant S_CFG => "Config";
+
 use constant S_NOTAGS => 'HTML tags allowed. No formatting will be done, you must use HTML for line breaks and paragraphs.'; # Prints message on Management Board
 
 use constant S_MPDELETEIP => 'Delete all';

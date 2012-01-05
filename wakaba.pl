@@ -80,11 +80,12 @@ while (my $query=new CGI::Fast) {
 	eval { $cfg = fetch_config($dbh,$boardSection); };
 	if ($@) 
 	{
+		print $@;
 		if (ENABLE_BOARD_AUTOCREATE 
 			and $boardSection =~ /^${\(BOARD_AUTOCREATE_PREFIX)}/)
 		{
-			init_section($sectionName);
-			$cfg = fetch_config($dbh,$sectionName);	
+			init_section($boardSection);
+			$cfg = fetch_config($dbh,$boardSection);	
 		} 
 		else
 		{
@@ -241,12 +242,13 @@ while (my $query=new CGI::Fast) {
 	elsif($task eq "sectioncfg")
 	{
 		my $admin=$query->param("admin");
-		make_admin_section_panel($admin);
+		make_admin_section_panel($admin, $boardSection);
 	}
 	elsif($task eq "updatesectioncfg")
 	{
 		my $admin=$query->param("admin");
-		# TODO 
+		my $sectionConfig=$query->param("sectionConfig");
+		do_update_sectioncfg($admin,$boardSection,$sectionConfig);
 	}
 	else
 	{
@@ -1479,7 +1481,7 @@ sub make_admin_section_panel($$)
 	check_password($admin,ADMIN_PASS);
 
 	eval { $sectionConfig = fetch_config($dbh,$sectionName); } or make_error(S_INVSECTION);
-
+	
 	make_http_header();
 	print encode_string(ADMIN_SECTION_TEMPLATE->(
 		cfg=>$cfg,
@@ -1609,6 +1611,19 @@ sub do_nuke_database($)
 	unlink glob $$cfg{RES_DIR}.'*';
 
 	build_cache($boardSection);
+
+	make_http_forward($$cfg{HTML_SELF},$$cfg{ALTERNATE_REDIRECT});
+}
+
+sub do_update_sectioncfg($$$)
+{
+	my ($admin,$sectionName,$sectionConfig) = @_;
+	my ($decodedConfig);
+
+	check_password($admin,ADMIN_PASS);
+
+	$decodedConfig = decode_json($sectionConfig);
+	store_config($sectionName,$decodedConfig);
 
 	make_http_forward($$cfg{HTML_SELF},$$cfg{ALTERNATE_REDIRECT});
 }
@@ -1943,7 +1958,13 @@ sub fetch_config($$)
 
 sub store_config($$)
 {
-	my ($sectionName,$configToStore);
+	my ($sectionName,$configToStore) = @_;
+	my ($sth);
+
+	eval { 
+		$sth=$dbh->prepare("DELETE FROM ".SQL_SETTINGS_TABLE." WHERE section=?;"); 
+		$sth->execute($sectionName);
+	} or do { };
 	eval {
 		$dbh->begin_work();
 		$sth=$dbh->prepare("INSERT INTO ".SQL_SETTINGS_TABLE." VALUES (?, ?);"); 
@@ -1951,7 +1972,6 @@ sub store_config($$)
 		$dbh->commit();
 	};
 	if ($@) {
-		print $@;
 		eval { $dbh->rollback(); };
 		make_error(S_SQLFAIL);
 	}
